@@ -4,8 +4,7 @@ export async function GET(request: Request) {
   const configured = process.env.App_key_corvoapp?.trim();
   if (!configured) {
     return Response.json({
-      ok: false,
-      code: "MCP_KEY_NOT_CONFIGURED",
+      ok: false, code: "MCP_KEY_NOT_CONFIGURED",
       message: "App_key_corvoapp não está disponível neste deployment. Salve a variável na Vercel e faça um novo deploy."
     }, { status: 503 });
   }
@@ -13,8 +12,7 @@ export async function GET(request: Request) {
   const supplied = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "").trim() || "";
   if (supplied !== configured) {
     return Response.json({
-      ok: false,
-      code: "MCP_KEY_INVALID",
+      ok: false, code: "MCP_KEY_INVALID",
       message: "A chave salva no navegador não corresponde a App_key_corvoapp deste deployment."
     }, { status: 401 });
   }
@@ -23,18 +21,13 @@ export async function GET(request: Request) {
     const s = await import("../../../lib/corvo-store");
     await s.ensureSchema();
     return Response.json({
-      ok: true,
-      code: "READY",
-      envName: "App_key_corvoapp",
-      database: "ready",
-      message: "Chave MCP e banco validados."
+      ok: true, code: "READY", envName: "App_key_corvoapp", storage: "vercel-blob",
+      message: "Chave MCP validada e armazenamento Vercel pronto."
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Falha ao validar banco";
     return Response.json({
-      ok: false,
-      code: "DATABASE_NOT_READY",
-      message
+      ok: false, code: "STORAGE_NOT_READY",
+      message: error instanceof Error ? error.message : "Falha ao validar armazenamento Vercel"
     }, { status: 503 });
   }
 }

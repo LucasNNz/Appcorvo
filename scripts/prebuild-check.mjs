@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 const root = process.cwd();
-const version = 'CORVO ROTEIRO MVP V0.3.7 — MCP DIAGNOSTIC';
+const version = 'CORVO ROTEIRO MVP V0.3.8 — VERCEL ONLY';
 console.log(`\n=== ${version} ===`);
 
 function remove(rel) {
@@ -28,6 +28,7 @@ function remove(rel) {
   'vite.config.ts',
   'vite.config.js',
   'drizzle.config.ts',
+  'drizzle',
   'wrangler.toml',
   'wrangler.json',
   'wrangler.jsonc',

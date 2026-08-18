@@ -1,53 +1,53 @@
-# CORVO ROTEIRO MVP V0.3.7 — MCP Diagnostic
+# CORVO ROTEIRO MVP V0.3.8 — VERCEL ONLY
 
-MVP Next.js nativo para Vercel, com Core persistente em D1 e controle direto pelo ChatGPT via MCP.
+MVP pessoal do novo Corvo: Next.js na Vercel, MCP direto e armazenamento persistente no Vercel Blob privado.
 
-## Variáveis de ambiente na Vercel
+## O que saiu
 
-- `CLOUDFLARE_ACCOUNT_ID`
-- `CLOUDFLARE_D1_DATABASE_ID`
-- `CLOUDFLARE_D1_API_TOKEN`
-- `App_key_corvoapp` — única chave pessoal usada para autenticar o MCP e as chamadas do app ao Core
-- `MCP_OWNER_EMAIL` — opcional; permite autenticação pelo cabeçalho de usuário do ChatGPT quando disponível
+- Cloudflare D1
+- CLOUDFLARE_ACCOUNT_ID
+- CLOUDFLARE_D1_DATABASE_ID
+- CLOUDFLARE_D1_API_TOKEN
 
-`App_key_corvoapp` é lida somente no backend. Depois de criar ou alterar essa variável na Vercel, faça um NOVO DEPLOY: deployments antigos não recebem variáveis adicionadas posteriormente.
+## Variável manual
 
-## Chave salva no app
+Na Vercel configure apenas a chave do MCP:
 
-Na primeira vez, clique em **MCP DESLIGADO** e cole a mesma chave configurada em `App_key_corvoapp`.
+```text
+App_key_corvoapp=SUA_CHAVE
+```
 
-O app agora valida em três etapas:
-1. `App_key_corvoapp` existe no deployment atual;
-2. a chave salva no navegador é exatamente a mesma;
-3. o D1 está acessível e o schema pode ser validado.
+`MCP_OWNER_EMAIL` é opcional.
 
-O app informa separadamente:
-- `App_key_corvoapp` ainda não carregada no deployment;
-- chave incorreta;
-- banco/D1 não pronto.
+## Persistência
 
-A chave continua salva em `localStorage`; desligar não apaga a chave.
+No projeto da Vercel, abra **Storage → Create Database → Blob → Private** e conecte o Blob ao projeto.
+Projetos novos conectados ao Vercel Blob usam OIDC por padrão, então as Functions podem autenticar no Blob sem uma chave Cloudflare nem outra integração externa.
 
-## Diagnóstico
+Depois faça um novo deploy.
 
-Endpoint interno do app:
+## MCP
 
-`GET /api/auth-check`
+Endpoint:
 
-Ele nunca devolve o valor de `App_key_corvoapp`; apenas informa se a variável está configurada, se a chave recebida confere e se o banco está acessível.
+```text
+https://SEU-DOMINIO/api/mcp
+```
 
-## Endpoint MCP
+Autenticação:
 
-`/api/mcp`
+```text
+Authorization: Bearer SUA_CHAVE
+```
 
-O servidor aceita:
-- `Authorization: Bearer <App_key_corvoapp>`
-- ou `?key=<App_key_corvoapp>` para clientes que usem a chave na URL.
+A mesma chave pode ser salva uma vez na interface e depois apenas ligada/desligada.
 
-## Controle MCP
+## Estado
 
-Mantidas as 23 ferramentas do Core: projetos, artefatos, cenas, jobs, retry/cancelamento, snapshots, histórico e rollback.
+O Core mantém projetos, cenas, jobs e snapshots no arquivo privado:
 
-## Build Vercel
+```text
+corvo-core/state-v1.json
+```
 
-O prebuild continua removendo resíduos legados do Roteiro/OpenAI Sites antes de executar `next build`.
+O ChatGPT continua com as 23 ferramentas MCP de leitura, edição, jobs, histórico e rollback.

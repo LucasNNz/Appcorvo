@@ -1,3 +1,5 @@
+import { get, put } from "@vercel/blob";
+
 export type ProjectInput = {
   id?: string;
   title: string;
@@ -47,93 +49,165 @@ export type SnapshotInput = {
   source?: string;
 };
 
-type D1Result<T> = { results?: T[] };
-type Statement = {
-  bind: (...values: unknown[]) => Statement;
-  run: () => Promise<unknown>;
-  all: <T>() => Promise<D1Result<T>>;
-  first: <T>() => Promise<T | null>;
-};
-type Database = { prepare: (sql: string) => Statement; batch: (statements: Statement[]) => Promise<unknown> };
-type D1QueryResult = { results?: Record<string, unknown>[]; success?: boolean };
-type CloudflareEnvelope = { success?: boolean; errors?: Array<{ code?: number; message?: string }>; result?: D1QueryResult[] };
-type BoundStatement = Statement & { __sql?: string; __params?: unknown[] };
-
-const requiredEnv = (name: string) => {
-  const value = process.env[name]?.trim();
-  if (!value) throw new Error(`Variável ${name} não configurada no servidor.`);
-  return value;
-};
-
-const normalizeParam = (value: unknown) => {
-  if (value === undefined) return null;
-  if (typeof value === "boolean") return value ? 1 : 0;
-  if (typeof value === "string" || typeof value === "number" || value === null) return value;
-  return String(value);
+type Project = {
+  id: string;
+  ownerId: string;
+  title: string;
+  topic: string;
+  format: string;
+  quantity: string;
+  mode: string;
+  status: string;
+  currentStep: string;
+  readyForAi: boolean;
+  ideaText: string;
+  scriptText: string;
+  promptsText: string;
+  createdAt: string;
+  updatedAt: string;
+  source?: string;
 };
 
-async function d1Request(payload: { sql: string; params?: unknown[] } | { batch: Array<{ sql: string; params?: unknown[] }> }) {
-  const accountId = requiredEnv("CLOUDFLARE_ACCOUNT_ID");
-  const databaseId = requiredEnv("CLOUDFLARE_D1_DATABASE_ID");
-  const token = requiredEnv("CLOUDFLARE_D1_API_TOKEN");
-  const response = await fetch(`https://api.cloudflare.com/client/v4/accounts/${accountId}/d1/database/${databaseId}/query`, {
-    method: "POST",
-    headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
-    body: JSON.stringify(payload),
-    cache: "no-store",
-  });
-  const data = await response.json() as CloudflareEnvelope;
-  if (!response.ok || !data.success) {
-    const detail = data.errors?.map((e) => e.message || String(e.code || "erro")).join("; ") || `HTTP ${response.status}`;
-    throw new Error(`Falha ao consultar D1: ${detail}`);
+type Scene = {
+  id: string;
+  ownerId: string;
+  projectId: string;
+  position: number;
+  title: string;
+  narration: string;
+  prompt: string;
+  variant: string;
+  status: string;
+  imageUrl: string;
+  imageFile: string;
+  notes: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+type Job = {
+  id: string;
+  ownerId: string;
+  projectId: string;
+  sceneId: string;
+  type: string;
+  status: string;
+  prompt: string;
+  outputUrl: string;
+  outputFile: string;
+  error: string;
+  attempt: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
+type Snapshot = {
+  id: string;
+  ownerId: string;
+  projectId: string;
+  label: string;
+  reason: string;
+  source: string;
+  project: Omit<Project, "ownerId">;
+  scenes: Array<Omit<Scene, "ownerId">>;
+  jobs: Array<Omit<Job, "ownerId">>;
+  createdAt: string;
+};
+
+type CorvoState = {
+  version: 1;
+  projects: Project[];
+  scenes: Scene[];
+  jobs: Job[];
+  snapshots: Snapshot[];
+};
+
+const STATE_PATH = "corvo-core/state-v1.json";
+const emptyState = (): CorvoState => ({ version: 1, projects: [], scenes: [], jobs: [], snapshots: [] });
+
+function storageError(error: unknown): Error {
+  const raw = error instanceof Error ? error.message : String(error || "erro desconhecido");
+  if (/blob|token|oidc|store|storage|not configured|environment/i.test(raw)) {
+    return new Error("Armazenamento Vercel Blob não conectado ao projeto. Crie/conecte um Blob privado em Storage na Vercel e faça novo deploy.");
   }
-  return data.result || [];
+  return error instanceof Error ? error : new Error(raw);
 }
 
-class HttpStatement implements BoundStatement {
-  __sql: string;
-  __params: unknown[];
-  constructor(sql: string, params: unknown[] = []) { this.__sql = sql; this.__params = params; }
-  bind(...values: unknown[]) { return new HttpStatement(this.__sql, values.map(normalizeParam)); }
-  async run() { return (await d1Request({ sql: this.__sql, params: this.__params }))[0] || {}; }
-  async all<T>() {
-    const result = (await d1Request({ sql: this.__sql, params: this.__params }))[0];
-    return { results: (result?.results || []) as T[] };
-  }
-  async first<T>() {
-    const result = await this.all<T>();
-    return result.results?.[0] ?? null;
+async function readState(): Promise<CorvoState> {
+  try {
+    const result = await get(STATE_PATH, { access: "private" });
+    if (!result || result.statusCode !== 200 || !result.stream) return emptyState();
+    const text = await new Response(result.stream).text();
+    if (!text.trim()) return emptyState();
+    const parsed = JSON.parse(text) as Partial<CorvoState>;
+    return {
+      version: 1,
+      projects: Array.isArray(parsed.projects) ? parsed.projects as Project[] : [],
+      scenes: Array.isArray(parsed.scenes) ? parsed.scenes as Scene[] : [],
+      jobs: Array.isArray(parsed.jobs) ? parsed.jobs as Job[] : [],
+      snapshots: Array.isArray(parsed.snapshots) ? parsed.snapshots as Snapshot[] : [],
+    };
+  } catch (error) {
+    // A store conectado pode ainda não possuir o arquivo inicial.
+    const message = error instanceof Error ? error.message : String(error);
+    if (/not found|404/i.test(message)) return emptyState();
+    throw storageError(error);
   }
 }
 
-const httpDatabase: Database = {
-  prepare(sql: string) { return new HttpStatement(sql); },
-  async batch(statements: Statement[]) {
-    const batch = statements.map((statement) => {
-      const bound = statement as BoundStatement;
-      if (!bound.__sql) throw new Error("Statement inválido no batch D1.");
-      return { sql: bound.__sql, params: (bound.__params || []).map(normalizeParam) };
+async function writeState(state: CorvoState): Promise<void> {
+  try {
+    await put(STATE_PATH, JSON.stringify(state), {
+      access: "private",
+      addRandomSuffix: false,
+      allowOverwrite: true,
+      contentType: "application/json",
+      cacheControlMaxAge: 60,
     });
-    return d1Request({ batch });
-  },
-};
+  } catch (error) {
+    throw storageError(error);
+  }
+}
 
-const database = () => httpDatabase;
+const publicProject = ({ ownerId: _ownerId, ...item }: Project) => item;
+const publicScene = ({ ownerId: _ownerId, ...item }: Scene) => item;
+const publicJob = ({ ownerId: _ownerId, ...item }: Job) => item;
+const publicSnapshot = ({ ownerId: _ownerId, project: _project, scenes: _scenes, jobs: _jobs, ...item }: Snapshot) => item;
+
+function touchProjectInState(state: CorvoState, ownerId: string, id: string, at = new Date().toISOString()) {
+  const project = state.projects.find((p) => p.ownerId === ownerId && p.id === id);
+  if (project) project.updatedAt = at;
+}
+
+function snapshotFromState(state: CorvoState, ownerId: string, input: SnapshotInput): Snapshot {
+  const project = state.projects.find((p) => p.ownerId === ownerId && p.id === input.projectId);
+  if (!project) throw new Error("Projeto não encontrado");
+  const now = new Date().toISOString();
+  const { ownerId: _po, ...projectCopy } = project;
+  const scenes = state.scenes
+    .filter((s) => s.ownerId === ownerId && s.projectId === input.projectId)
+    .map(({ ownerId: _so, ...scene }) => ({ ...scene }));
+  const jobs = state.jobs
+    .filter((j) => j.ownerId === ownerId && j.projectId === input.projectId)
+    .map(({ ownerId: _jo, ...job }) => ({ ...job }));
+  return {
+    id: newId("snapshot"), ownerId, projectId: input.projectId,
+    label: input.label?.trim() || `Snapshot ${now}`,
+    reason: input.reason?.trim() || "",
+    source: input.source?.trim() || "system",
+    project: { ...projectCopy }, scenes, jobs, createdAt: now,
+  };
+}
 
 export const newId = (prefix: string) => `${prefix}_${Date.now()}_${crypto.randomUUID().slice(0, 8)}`;
 
 export async function ensureSchema() {
-  const db = database();
-  await db.batch([
-    db.prepare(`CREATE TABLE IF NOT EXISTS projects (id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, title TEXT NOT NULL, topic TEXT NOT NULL DEFAULT '', format TEXT NOT NULL DEFAULT 'REELS', quantity TEXT NOT NULL DEFAULT '1 VÍDEO', mode TEXT NOT NULL DEFAULT 'RÁPIDO', status TEXT NOT NULL DEFAULT 'DRAFT', current_step TEXT NOT NULL DEFAULT 'IDEIA', ready_for_ai INTEGER NOT NULL DEFAULT 0, idea_text TEXT NOT NULL DEFAULT '', script_text TEXT NOT NULL DEFAULT '', prompts_text TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`),
-    db.prepare(`CREATE INDEX IF NOT EXISTS projects_owner_updated_idx ON projects(owner_id, updated_at DESC)`),
-    db.prepare(`CREATE TABLE IF NOT EXISTS scenes (id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, project_id TEXT NOT NULL, position INTEGER NOT NULL, title TEXT NOT NULL DEFAULT '', narration TEXT NOT NULL DEFAULT '', prompt TEXT NOT NULL DEFAULT '', variant TEXT NOT NULL DEFAULT 'SINGLE', status TEXT NOT NULL DEFAULT 'PENDING', image_url TEXT NOT NULL DEFAULT '', image_file TEXT NOT NULL DEFAULT '', notes TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`),
-    db.prepare(`CREATE INDEX IF NOT EXISTS scenes_project_position_idx ON scenes(owner_id, project_id, position ASC)`),
-    db.prepare(`CREATE TABLE IF NOT EXISTS jobs (id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, project_id TEXT NOT NULL, scene_id TEXT, type TEXT NOT NULL DEFAULT 'GENERATE_IMAGE', status TEXT NOT NULL DEFAULT 'PENDING', prompt TEXT NOT NULL DEFAULT '', output_url TEXT NOT NULL DEFAULT '', output_file TEXT NOT NULL DEFAULT '', error TEXT NOT NULL DEFAULT '', attempt INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`),
-    db.prepare(`CREATE INDEX IF NOT EXISTS jobs_project_updated_idx ON jobs(owner_id, project_id, updated_at DESC)`),
-    db.prepare(`CREATE TABLE IF NOT EXISTS snapshots (id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, project_id TEXT NOT NULL, label TEXT NOT NULL DEFAULT '', reason TEXT NOT NULL DEFAULT '', source TEXT NOT NULL DEFAULT 'system', project_json TEXT NOT NULL, scenes_json TEXT NOT NULL, jobs_json TEXT NOT NULL, created_at TEXT NOT NULL)`),
-    db.prepare(`CREATE INDEX IF NOT EXISTS snapshots_project_created_idx ON snapshots(owner_id, project_id, created_at DESC)`),
-  ]);
+  const state = await readState();
+  // Inicializa o arquivo somente quando ainda não há estado algum.
+  if (!state.projects.length && !state.scenes.length && !state.jobs.length && !state.snapshots.length) {
+    await writeState(state);
+  }
+  return { storage: "vercel-blob", ready: true };
 }
 
 export function authorize(request: Request) {
@@ -147,278 +221,312 @@ export function authorize(request: Request) {
   return { ok: false, ownerId: "", mode: "none" };
 }
 
-const projectRow = (r: Record<string, unknown>) => ({
-  id: String(r.id), title: String(r.title), topic: String(r.topic), format: String(r.format), quantity: String(r.quantity), mode: String(r.mode),
-  status: String(r.status), currentStep: String(r.current_step), readyForAi: Boolean(r.ready_for_ai), ideaText: String(r.idea_text),
-  scriptText: String(r.script_text), promptsText: String(r.prompts_text), createdAt: String(r.created_at), updatedAt: String(r.updated_at),
-});
-const sceneRow = (r: Record<string, unknown>) => ({
-  id: String(r.id), projectId: String(r.project_id), position: Number(r.position), title: String(r.title), narration: String(r.narration),
-  prompt: String(r.prompt), variant: String(r.variant), status: String(r.status), imageUrl: String(r.image_url), imageFile: String(r.image_file),
-  notes: String(r.notes), createdAt: String(r.created_at), updatedAt: String(r.updated_at),
-});
-const jobRow = (r: Record<string, unknown>) => ({
-  id: String(r.id), projectId: String(r.project_id), sceneId: r.scene_id ? String(r.scene_id) : "", type: String(r.type), status: String(r.status),
-  prompt: String(r.prompt), outputUrl: String(r.output_url), outputFile: String(r.output_file), error: String(r.error), attempt: Number(r.attempt),
-  createdAt: String(r.created_at), updatedAt: String(r.updated_at),
-});
-const snapshotRow = (r: Record<string, unknown>) => ({
-  id: String(r.id), projectId: String(r.project_id), label: String(r.label), reason: String(r.reason), source: String(r.source), createdAt: String(r.created_at),
-});
-
 export async function createProject(ownerId: string, input: ProjectInput, source = "site") {
-  await ensureSchema();
+  const state = await readState();
   const now = new Date().toISOString();
-  const item = {
-    id: input.id || newId("project"), title: input.title.trim(), topic: input.topic?.trim() || "", format: input.format || "REELS",
+  const item: Project = {
+    id: input.id || newId("project"), ownerId, title: input.title.trim(), topic: input.topic?.trim() || "", format: input.format || "REELS",
     quantity: input.quantity || "1 VÍDEO", mode: input.mode || "RÁPIDO", status: input.status || "DRAFT", currentStep: input.currentStep || "IDEIA",
     readyForAi: Boolean(input.readyForAi), ideaText: input.ideaText || "", scriptText: input.scriptText || "", promptsText: input.promptsText || "",
     createdAt: now, updatedAt: now, source,
   };
-  await database().prepare(`INSERT INTO projects (id,owner_id,title,topic,format,quantity,mode,status,current_step,ready_for_ai,idea_text,script_text,prompts_text,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
-    .bind(item.id, ownerId, item.title, item.topic, item.format, item.quantity, item.mode, item.status, item.currentStep, item.readyForAi ? 1 : 0, item.ideaText, item.scriptText, item.promptsText, item.createdAt, item.updatedAt).run();
-  return item;
+  state.projects.push(item);
+  await writeState(state);
+  return publicProject(item);
 }
 
 export async function listProjects(ownerId: string, limit = 100) {
-  await ensureSchema();
-  const res = await database().prepare(`SELECT * FROM projects WHERE owner_id=? ORDER BY updated_at DESC LIMIT ?`).bind(ownerId, Math.max(1, Math.min(100, limit))).all<Record<string, unknown>>();
-  return (res.results || []).map(projectRow);
+  const state = await readState();
+  return state.projects
+    .filter((p) => p.ownerId === ownerId)
+    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+    .slice(0, Math.max(1, Math.min(100, limit)))
+    .map(publicProject);
 }
 
 export async function getProject(ownerId: string, id: string) {
-  await ensureSchema();
-  const row = await database().prepare(`SELECT * FROM projects WHERE owner_id=? AND id=?`).bind(ownerId, id).first<Record<string, unknown>>();
-  return row ? projectRow(row) : null;
+  const state = await readState();
+  const project = state.projects.find((p) => p.ownerId === ownerId && p.id === id);
+  return project ? publicProject(project) : null;
 }
 
 export async function updateProject(ownerId: string, id: string, changes: Partial<ProjectInput>) {
-  const cur = await getProject(ownerId, id);
+  const state = await readState();
+  const cur = state.projects.find((p) => p.ownerId === ownerId && p.id === id);
   if (!cur) return null;
-  const next = { ...cur, ...changes, title: (changes.title ?? cur.title).trim(), topic: (changes.topic ?? cur.topic).trim(), updatedAt: new Date().toISOString() };
-  await database().prepare(`UPDATE projects SET title=?,topic=?,format=?,quantity=?,mode=?,status=?,current_step=?,ready_for_ai=?,idea_text=?,script_text=?,prompts_text=?,updated_at=? WHERE owner_id=? AND id=?`)
-    .bind(next.title, next.topic, next.format, next.quantity, next.mode, next.status, next.currentStep, next.readyForAi ? 1 : 0, next.ideaText, next.scriptText, next.promptsText, next.updatedAt, ownerId, id).run();
-  return next;
+  const now = new Date().toISOString();
+  cur.title = (changes.title ?? cur.title).trim();
+  cur.topic = (changes.topic ?? cur.topic).trim();
+  if (changes.format !== undefined) cur.format = changes.format;
+  if (changes.quantity !== undefined) cur.quantity = changes.quantity;
+  if (changes.mode !== undefined) cur.mode = changes.mode;
+  if (changes.status !== undefined) cur.status = changes.status;
+  if (changes.currentStep !== undefined) cur.currentStep = changes.currentStep;
+  if (changes.readyForAi !== undefined) cur.readyForAi = Boolean(changes.readyForAi);
+  if (changes.ideaText !== undefined) cur.ideaText = changes.ideaText;
+  if (changes.scriptText !== undefined) cur.scriptText = changes.scriptText;
+  if (changes.promptsText !== undefined) cur.promptsText = changes.promptsText;
+  cur.updatedAt = now;
+  await writeState(state);
+  return publicProject(cur);
 }
 
 export async function deleteProject(ownerId: string, id: string) {
-  await ensureSchema();
-  const db = database();
-  await db.batch([
-    db.prepare(`DELETE FROM jobs WHERE owner_id=? AND project_id=?`).bind(ownerId, id),
-    db.prepare(`DELETE FROM scenes WHERE owner_id=? AND project_id=?`).bind(ownerId, id),
-    db.prepare(`DELETE FROM projects WHERE owner_id=? AND id=?`).bind(ownerId, id),
-  ]);
-  return { id, deleted: true };
+  const state = await readState();
+  const existed = state.projects.some((p) => p.ownerId === ownerId && p.id === id);
+  state.jobs = state.jobs.filter((j) => !(j.ownerId === ownerId && j.projectId === id));
+  state.scenes = state.scenes.filter((s) => !(s.ownerId === ownerId && s.projectId === id));
+  state.projects = state.projects.filter((p) => !(p.ownerId === ownerId && p.id === id));
+  if (existed) await writeState(state);
+  return { id, deleted: existed };
 }
 
 export async function listScenes(ownerId: string, projectId: string) {
-  await ensureSchema();
-  const res = await database().prepare(`SELECT * FROM scenes WHERE owner_id=? AND project_id=? ORDER BY position ASC, created_at ASC`).bind(ownerId, projectId).all<Record<string, unknown>>();
-  return (res.results || []).map(sceneRow);
+  const state = await readState();
+  return state.scenes
+    .filter((s) => s.ownerId === ownerId && s.projectId === projectId)
+    .sort((a, b) => a.position - b.position || a.createdAt.localeCompare(b.createdAt))
+    .map(publicScene);
 }
 
 export async function saveScene(ownerId: string, input: SceneInput) {
-  await ensureSchema();
+  const state = await readState();
   const now = new Date().toISOString();
   const id = input.id || newId("scene");
-  const existing = input.id ? await database().prepare(`SELECT * FROM scenes WHERE owner_id=? AND id=?`).bind(ownerId, id).first<Record<string, unknown>>() : null;
-  const cur = existing ? sceneRow(existing) : null;
-  const item = {
-    id, projectId: input.projectId || cur?.projectId || "", position: Number(input.position ?? cur?.position ?? 1), title: input.title ?? cur?.title ?? "",
-    narration: input.narration ?? cur?.narration ?? "", prompt: input.prompt ?? cur?.prompt ?? "", variant: input.variant ?? cur?.variant ?? "SINGLE",
-    status: input.status ?? cur?.status ?? "PENDING", imageUrl: input.imageUrl ?? cur?.imageUrl ?? "", imageFile: input.imageFile ?? cur?.imageFile ?? "",
-    notes: input.notes ?? cur?.notes ?? "", createdAt: cur?.createdAt || now, updatedAt: now,
-  };
-  await database().prepare(`INSERT INTO scenes (id,owner_id,project_id,position,title,narration,prompt,variant,status,image_url,image_file,notes,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET project_id=excluded.project_id,position=excluded.position,title=excluded.title,narration=excluded.narration,prompt=excluded.prompt,variant=excluded.variant,status=excluded.status,image_url=excluded.image_url,image_file=excluded.image_file,notes=excluded.notes,updated_at=excluded.updated_at`)
-    .bind(item.id, ownerId, item.projectId, item.position, item.title, item.narration, item.prompt, item.variant, item.status, item.imageUrl, item.imageFile, item.notes, item.createdAt, item.updatedAt).run();
-  await touchProject(ownerId, item.projectId);
-  return item;
+  let item = state.scenes.find((s) => s.ownerId === ownerId && s.id === id);
+  if (!item) {
+    item = {
+      id, ownerId, projectId: input.projectId, position: Number(input.position ?? 1), title: input.title ?? "", narration: input.narration ?? "",
+      prompt: input.prompt ?? "", variant: input.variant ?? "SINGLE", status: input.status ?? "PENDING", imageUrl: input.imageUrl ?? "",
+      imageFile: input.imageFile ?? "", notes: input.notes ?? "", createdAt: now, updatedAt: now,
+    };
+    state.scenes.push(item);
+  } else {
+    item.projectId = input.projectId || item.projectId;
+    if (input.position !== undefined) item.position = Number(input.position);
+    if (input.title !== undefined) item.title = input.title;
+    if (input.narration !== undefined) item.narration = input.narration;
+    if (input.prompt !== undefined) item.prompt = input.prompt;
+    if (input.variant !== undefined) item.variant = input.variant;
+    if (input.status !== undefined) item.status = input.status;
+    if (input.imageUrl !== undefined) item.imageUrl = input.imageUrl;
+    if (input.imageFile !== undefined) item.imageFile = input.imageFile;
+    if (input.notes !== undefined) item.notes = input.notes;
+    item.updatedAt = now;
+  }
+  touchProjectInState(state, ownerId, item.projectId, now);
+  await writeState(state);
+  return publicScene(item);
 }
 
 export async function replaceScenes(ownerId: string, projectId: string, inputs: Omit<SceneInput, "projectId">[]) {
-  await ensureSchema();
-  const db = database();
-  await db.batch([
-    db.prepare(`DELETE FROM jobs WHERE owner_id=? AND project_id=?`).bind(ownerId, projectId),
-    db.prepare(`DELETE FROM scenes WHERE owner_id=? AND project_id=?`).bind(ownerId, projectId),
-  ]);
-  const out = [];
-  for (let i = 0; i < inputs.slice(0, 200).length; i++) out.push(await saveScene(ownerId, { ...inputs[i], projectId, position: inputs[i].position ?? i + 1 }));
-  await updateProject(ownerId, projectId, { currentStep: "CENAS", status: "IN_PROGRESS" });
-  return out;
+  const state = await readState();
+  const now = new Date().toISOString();
+  state.jobs = state.jobs.filter((j) => !(j.ownerId === ownerId && j.projectId === projectId));
+  state.scenes = state.scenes.filter((s) => !(s.ownerId === ownerId && s.projectId === projectId));
+  const scenes: Scene[] = inputs.slice(0, 200).map((input, i) => ({
+    id: input.id || newId("scene"), ownerId, projectId, position: Number(input.position ?? i + 1), title: input.title ?? "", narration: input.narration ?? "",
+    prompt: input.prompt ?? "", variant: input.variant ?? "SINGLE", status: input.status ?? "PENDING", imageUrl: input.imageUrl ?? "",
+    imageFile: input.imageFile ?? "", notes: input.notes ?? "", createdAt: now, updatedAt: now,
+  }));
+  state.scenes.push(...scenes);
+  const project = state.projects.find((p) => p.ownerId === ownerId && p.id === projectId);
+  if (project) { project.currentStep = "CENAS"; project.status = "IN_PROGRESS"; project.updatedAt = now; }
+  await writeState(state);
+  return scenes.map(publicScene);
 }
 
 export async function deleteScene(ownerId: string, id: string) {
-  await ensureSchema();
-  const row = await database().prepare(`SELECT project_id FROM scenes WHERE owner_id=? AND id=?`).bind(ownerId, id).first<{ project_id: string }>();
-  if (!row) return { id, deleted: false };
-  await database().prepare(`DELETE FROM jobs WHERE owner_id=? AND scene_id=?`).bind(ownerId, id).run();
-  await database().prepare(`DELETE FROM scenes WHERE owner_id=? AND id=?`).bind(ownerId, id).run();
-  await touchProject(ownerId, row.project_id);
-  return { id, projectId: row.project_id, deleted: true };
+  const state = await readState();
+  const scene = state.scenes.find((s) => s.ownerId === ownerId && s.id === id);
+  if (!scene) return { id, deleted: false };
+  state.jobs = state.jobs.filter((j) => !(j.ownerId === ownerId && j.sceneId === id));
+  state.scenes = state.scenes.filter((s) => !(s.ownerId === ownerId && s.id === id));
+  touchProjectInState(state, ownerId, scene.projectId);
+  await writeState(state);
+  return { id, projectId: scene.projectId, deleted: true };
 }
 
 export async function createJobs(ownerId: string, inputs: JobInput[]) {
-  await ensureSchema();
-  const out = [];
+  const state = await readState();
+  const out: Job[] = [];
+  const now = new Date().toISOString();
   for (const input of inputs.slice(0, 200)) {
-    const now = new Date().toISOString();
-    const item = {
-      id: input.id || newId("job"), projectId: input.projectId, sceneId: input.sceneId || null, type: input.type || "GENERATE_IMAGE",
-      status: input.status || "PENDING", prompt: input.prompt || "", outputUrl: input.outputUrl || "", outputFile: input.outputFile || "",
-      error: input.error || "", attempt: Number(input.attempt) || 0, createdAt: now, updatedAt: now,
-    };
-    await database().prepare(`INSERT INTO jobs (id,owner_id,project_id,scene_id,type,status,prompt,output_url,output_file,error,attempt,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET scene_id=excluded.scene_id,type=excluded.type,status=excluded.status,prompt=excluded.prompt,output_url=excluded.output_url,output_file=excluded.output_file,error=excluded.error,attempt=excluded.attempt,updated_at=excluded.updated_at`)
-      .bind(item.id, ownerId, item.projectId, item.sceneId, item.type, item.status, item.prompt, item.outputUrl, item.outputFile, item.error, item.attempt, item.createdAt, item.updatedAt).run();
+    const id = input.id || newId("job");
+    let item = state.jobs.find((j) => j.ownerId === ownerId && j.id === id);
+    if (!item) {
+      item = {
+        id, ownerId, projectId: input.projectId, sceneId: input.sceneId || "", type: input.type || "GENERATE_IMAGE", status: input.status || "PENDING",
+        prompt: input.prompt || "", outputUrl: input.outputUrl || "", outputFile: input.outputFile || "", error: input.error || "",
+        attempt: Number(input.attempt) || 0, createdAt: now, updatedAt: now,
+      };
+      state.jobs.push(item);
+    } else {
+      item.projectId = input.projectId || item.projectId;
+      if (input.sceneId !== undefined) item.sceneId = input.sceneId || "";
+      if (input.type !== undefined) item.type = input.type;
+      if (input.status !== undefined) item.status = input.status;
+      if (input.prompt !== undefined) item.prompt = input.prompt;
+      if (input.outputUrl !== undefined) item.outputUrl = input.outputUrl;
+      if (input.outputFile !== undefined) item.outputFile = input.outputFile;
+      if (input.error !== undefined) item.error = input.error;
+      if (input.attempt !== undefined) item.attempt = Number(input.attempt) || 0;
+      item.updatedAt = now;
+    }
+    touchProjectInState(state, ownerId, item.projectId, now);
     out.push(item);
-    await touchProject(ownerId, item.projectId);
   }
-  return out;
+  await writeState(state);
+  return out.map(publicJob);
 }
 
 export async function listJobs(ownerId: string, projectId?: string, status?: string, limit = 200) {
-  await ensureSchema();
-  const where = ["owner_id=?"];
-  const binds: unknown[] = [ownerId];
-  if (projectId) { where.push("project_id=?"); binds.push(projectId); }
-  if (status) { where.push("status=?"); binds.push(status); }
-  binds.push(Math.max(1, Math.min(500, limit)));
-  const res = await database().prepare(`SELECT * FROM jobs WHERE ${where.join(" AND ")} ORDER BY updated_at DESC LIMIT ?`).bind(...binds).all<Record<string, unknown>>();
-  return (res.results || []).map(jobRow);
+  const state = await readState();
+  return state.jobs
+    .filter((j) => j.ownerId === ownerId && (!projectId || j.projectId === projectId) && (!status || j.status === status))
+    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+    .slice(0, Math.max(1, Math.min(500, limit)))
+    .map(publicJob);
 }
 
 export async function getJob(ownerId: string, id: string) {
-  await ensureSchema();
-  const row = await database().prepare(`SELECT * FROM jobs WHERE owner_id=? AND id=?`).bind(ownerId, id).first<Record<string, unknown>>();
-  return row ? jobRow(row) : null;
+  const state = await readState();
+  const job = state.jobs.find((j) => j.ownerId === ownerId && j.id === id);
+  return job ? publicJob(job) : null;
 }
 
 export async function updateJob(ownerId: string, id: string, changes: Partial<JobInput>) {
-  const cur = await getJob(ownerId, id);
-  if (!cur) return null;
-  const next = { ...cur, ...changes, sceneId: changes.sceneId ?? cur.sceneId, updatedAt: new Date().toISOString() };
-  await database().prepare(`UPDATE jobs SET project_id=?,scene_id=?,type=?,status=?,prompt=?,output_url=?,output_file=?,error=?,attempt=?,updated_at=? WHERE owner_id=? AND id=?`)
-    .bind(next.projectId, next.sceneId || null, next.type, next.status, next.prompt, next.outputUrl, next.outputFile, next.error, next.attempt, next.updatedAt, ownerId, id).run();
-  if (next.sceneId && next.outputUrl && next.status === "DONE") {
-    await saveScene(ownerId, { id: next.sceneId, projectId: next.projectId, imageUrl: next.outputUrl, imageFile: next.outputFile, status: "DONE" });
+  const state = await readState();
+  const job = state.jobs.find((j) => j.ownerId === ownerId && j.id === id);
+  if (!job) return null;
+  const now = new Date().toISOString();
+  if (changes.projectId !== undefined) job.projectId = changes.projectId;
+  if (changes.sceneId !== undefined) job.sceneId = changes.sceneId || "";
+  if (changes.type !== undefined) job.type = changes.type;
+  if (changes.status !== undefined) job.status = changes.status;
+  if (changes.prompt !== undefined) job.prompt = changes.prompt;
+  if (changes.outputUrl !== undefined) job.outputUrl = changes.outputUrl;
+  if (changes.outputFile !== undefined) job.outputFile = changes.outputFile;
+  if (changes.error !== undefined) job.error = changes.error;
+  if (changes.attempt !== undefined) job.attempt = Number(changes.attempt) || 0;
+  job.updatedAt = now;
+  if (job.sceneId && job.outputUrl && job.status === "DONE") {
+    const scene = state.scenes.find((s) => s.ownerId === ownerId && s.id === job.sceneId);
+    if (scene) { scene.imageUrl = job.outputUrl; scene.imageFile = job.outputFile; scene.status = "DONE"; scene.updatedAt = now; }
   }
-  await touchProject(ownerId, next.projectId);
-  return next;
+  touchProjectInState(state, ownerId, job.projectId, now);
+  await writeState(state);
+  return publicJob(job);
 }
 
 export async function retryJob(ownerId: string, id: string, prompt?: string) {
-  const cur = await getJob(ownerId, id);
-  if (!cur) return null;
-  if (cur.status === "RUNNING") throw new Error("Não é possível refazer um job enquanto ele está RUNNING. Cancele-o primeiro.");
-  if (cur.sceneId) await saveScene(ownerId, { id: cur.sceneId, projectId: cur.projectId, status: "PENDING", imageUrl: "", imageFile: "" });
-  return updateJob(ownerId, id, {
-    status: "PENDING", prompt: prompt ?? cur.prompt, outputUrl: "", outputFile: "", error: "", attempt: cur.attempt + 1,
-  });
+  const state = await readState();
+  const job = state.jobs.find((j) => j.ownerId === ownerId && j.id === id);
+  if (!job) return null;
+  if (job.status === "RUNNING") throw new Error("Não é possível refazer um job enquanto ele está RUNNING. Cancele-o primeiro.");
+  const now = new Date().toISOString();
+  if (job.sceneId) {
+    const scene = state.scenes.find((s) => s.ownerId === ownerId && s.id === job.sceneId);
+    if (scene) { scene.status = "PENDING"; scene.imageUrl = ""; scene.imageFile = ""; scene.updatedAt = now; }
+  }
+  job.status = "PENDING"; job.prompt = prompt ?? job.prompt; job.outputUrl = ""; job.outputFile = ""; job.error = ""; job.attempt += 1; job.updatedAt = now;
+  touchProjectInState(state, ownerId, job.projectId, now);
+  await writeState(state);
+  return publicJob(job);
 }
 
 export async function cancelJob(ownerId: string, id: string) {
-  const cur = await getJob(ownerId, id);
-  if (!cur) return null;
-  if (cur.status === "DONE") throw new Error("Job DONE não é cancelado; use refazer_job se quiser uma nova tentativa.");
-  return updateJob(ownerId, id, { status: "CANCELLED" });
+  const state = await readState();
+  const job = state.jobs.find((j) => j.ownerId === ownerId && j.id === id);
+  if (!job) return null;
+  if (job.status === "DONE") throw new Error("Job DONE não é cancelado; use refazer_job se quiser uma nova tentativa.");
+  job.status = "CANCELLED"; job.updatedAt = new Date().toISOString();
+  touchProjectInState(state, ownerId, job.projectId, job.updatedAt);
+  await writeState(state);
+  return publicJob(job);
 }
 
 export async function deleteJob(ownerId: string, id: string) {
-  const cur = await getJob(ownerId, id);
-  if (!cur) return { id, deleted: false };
-  await database().prepare(`DELETE FROM jobs WHERE owner_id=? AND id=?`).bind(ownerId, id).run();
-  await touchProject(ownerId, cur.projectId);
-  return { id, projectId: cur.projectId, deleted: true };
+  const state = await readState();
+  const job = state.jobs.find((j) => j.ownerId === ownerId && j.id === id);
+  if (!job) return { id, deleted: false };
+  state.jobs = state.jobs.filter((j) => !(j.ownerId === ownerId && j.id === id));
+  touchProjectInState(state, ownerId, job.projectId);
+  await writeState(state);
+  return { id, projectId: job.projectId, deleted: true };
 }
 
 export async function touchProject(ownerId: string, id: string) {
-  await ensureSchema();
-  await database().prepare(`UPDATE projects SET updated_at=? WHERE owner_id=? AND id=?`).bind(new Date().toISOString(), ownerId, id).run();
+  const state = await readState();
+  touchProjectInState(state, ownerId, id);
+  await writeState(state);
 }
 
 export async function listSnapshots(ownerId: string, projectId: string, limit = 50) {
-  await ensureSchema();
-  const res = await database().prepare(`SELECT id,project_id,label,reason,source,created_at FROM snapshots WHERE owner_id=? AND project_id=? ORDER BY created_at DESC LIMIT ?`)
-    .bind(ownerId, projectId, Math.max(1, Math.min(200, limit))).all<Record<string, unknown>>();
-  return (res.results || []).map(snapshotRow);
+  const state = await readState();
+  return state.snapshots
+    .filter((s) => s.ownerId === ownerId && s.projectId === projectId)
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+    .slice(0, Math.max(1, Math.min(200, limit)))
+    .map(publicSnapshot);
 }
 
 export async function createSnapshot(ownerId: string, input: SnapshotInput) {
-  await ensureSchema();
-  const project = await getProject(ownerId, input.projectId);
-  if (!project) throw new Error("Projeto não encontrado");
-  const [scenes, jobs] = await Promise.all([listScenes(ownerId, input.projectId), listJobs(ownerId, input.projectId, undefined, 500)]);
-  const now = new Date().toISOString();
-  const item = {
-    id: newId("snapshot"), projectId: input.projectId, label: input.label?.trim() || `Snapshot ${now}`,
-    reason: input.reason?.trim() || "", source: input.source?.trim() || "system", createdAt: now,
-  };
-  await database().prepare(`INSERT INTO snapshots (id,owner_id,project_id,label,reason,source,project_json,scenes_json,jobs_json,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)`)
-    .bind(item.id, ownerId, item.projectId, item.label, item.reason, item.source, JSON.stringify(project), JSON.stringify(scenes), JSON.stringify(jobs), item.createdAt).run();
-  await database().prepare(`DELETE FROM snapshots WHERE owner_id=? AND project_id=? AND id NOT IN (SELECT id FROM snapshots WHERE owner_id=? AND project_id=? ORDER BY created_at DESC LIMIT 100)`)
-    .bind(ownerId, item.projectId, ownerId, item.projectId).run();
-  return item;
+  const state = await readState();
+  const item = snapshotFromState(state, ownerId, input);
+  state.snapshots.push(item);
+  const keepIds = new Set(state.snapshots
+    .filter((s) => s.ownerId === ownerId && s.projectId === input.projectId)
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+    .slice(0, 100)
+    .map((s) => s.id));
+  state.snapshots = state.snapshots.filter((s) => s.ownerId !== ownerId || s.projectId !== input.projectId || keepIds.has(s.id));
+  await writeState(state);
+  return publicSnapshot(item);
 }
 
 export async function getSnapshot(ownerId: string, id: string) {
-  await ensureSchema();
-  const row = await database().prepare(`SELECT * FROM snapshots WHERE owner_id=? AND id=?`).bind(ownerId, id).first<Record<string, unknown>>();
-  if (!row) return null;
-  return {
-    ...snapshotRow(row),
-    project: JSON.parse(String(row.project_json)),
-    scenes: JSON.parse(String(row.scenes_json)),
-    jobs: JSON.parse(String(row.jobs_json)),
-  };
+  const state = await readState();
+  const snap = state.snapshots.find((s) => s.ownerId === ownerId && s.id === id);
+  if (!snap) return null;
+  return { ...publicSnapshot(snap), project: snap.project, scenes: snap.scenes, jobs: snap.jobs };
 }
 
 export async function restoreSnapshot(ownerId: string, snapshotId: string) {
-  const snap = await getSnapshot(ownerId, snapshotId);
+  const state = await readState();
+  const snap = state.snapshots.find((s) => s.ownerId === ownerId && s.id === snapshotId);
   if (!snap) return null;
-  const current = await getProject(ownerId, snap.projectId);
-  if (current) await createSnapshot(ownerId, { projectId: snap.projectId, label: "Antes da restauração", reason: `Snapshot de segurança antes de restaurar ${snapshotId}`, source: "system" });
-
-  const db = database();
-  const project = snap.project as ReturnType<typeof projectRow>;
-  const scenes = snap.scenes as ReturnType<typeof sceneRow>[];
-  const jobs = snap.jobs as ReturnType<typeof jobRow>[];
+  const current = state.projects.find((p) => p.ownerId === ownerId && p.id === snap.projectId);
+  if (current) state.snapshots.push(snapshotFromState(state, ownerId, { projectId: snap.projectId, label: "Antes da restauração", reason: `Snapshot de segurança antes de restaurar ${snapshotId}`, source: "system" }));
   const restoredAt = new Date().toISOString();
-
-  await db.batch([
-    db.prepare(`DELETE FROM jobs WHERE owner_id=? AND project_id=?`).bind(ownerId, snap.projectId),
-    db.prepare(`DELETE FROM scenes WHERE owner_id=? AND project_id=?`).bind(ownerId, snap.projectId),
-    db.prepare(`DELETE FROM projects WHERE owner_id=? AND id=?`).bind(ownerId, snap.projectId),
-  ]);
-
-  await db.prepare(`INSERT INTO projects (id,owner_id,title,topic,format,quantity,mode,status,current_step,ready_for_ai,idea_text,script_text,prompts_text,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
-    .bind(project.id, ownerId, project.title, project.topic, project.format, project.quantity, project.mode, project.status, project.currentStep, project.readyForAi ? 1 : 0, project.ideaText, project.scriptText, project.promptsText, project.createdAt, restoredAt).run();
-
-  for (const scene of scenes) {
-    await db.prepare(`INSERT INTO scenes (id,owner_id,project_id,position,title,narration,prompt,variant,status,image_url,image_file,notes,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
-      .bind(scene.id, ownerId, scene.projectId, scene.position, scene.title, scene.narration, scene.prompt, scene.variant, scene.status, scene.imageUrl, scene.imageFile, scene.notes, scene.createdAt, restoredAt).run();
-  }
-  for (const job of jobs) {
-    await db.prepare(`INSERT INTO jobs (id,owner_id,project_id,scene_id,type,status,prompt,output_url,output_file,error,attempt,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`)
-      .bind(job.id, ownerId, job.projectId, job.sceneId || null, job.type, job.status, job.prompt, job.outputUrl, job.outputFile, job.error, job.attempt, job.createdAt, restoredAt).run();
-  }
+  state.jobs = state.jobs.filter((j) => !(j.ownerId === ownerId && j.projectId === snap.projectId));
+  state.scenes = state.scenes.filter((s) => !(s.ownerId === ownerId && s.projectId === snap.projectId));
+  state.projects = state.projects.filter((p) => !(p.ownerId === ownerId && p.id === snap.projectId));
+  state.projects.push({ ...snap.project, ownerId, updatedAt: restoredAt });
+  state.scenes.push(...snap.scenes.map((s) => ({ ...s, ownerId, updatedAt: restoredAt })));
+  state.jobs.push(...snap.jobs.map((j) => ({ ...j, ownerId, updatedAt: restoredAt })));
+  await writeState(state);
   return { snapshotId, projectId: snap.projectId, restored: true, restoredAt };
 }
 
 export async function deleteSnapshot(ownerId: string, id: string) {
-  await ensureSchema();
-  const row = await database().prepare(`SELECT project_id FROM snapshots WHERE owner_id=? AND id=?`).bind(ownerId, id).first<{ project_id: string }>();
-  if (!row) return { id, deleted: false };
-  await database().prepare(`DELETE FROM snapshots WHERE owner_id=? AND id=?`).bind(ownerId, id).run();
-  return { id, projectId: row.project_id, deleted: true };
+  const state = await readState();
+  const snap = state.snapshots.find((s) => s.ownerId === ownerId && s.id === id);
+  if (!snap) return { id, deleted: false };
+  state.snapshots = state.snapshots.filter((s) => !(s.ownerId === ownerId && s.id === id));
+  await writeState(state);
+  return { id, projectId: snap.projectId, deleted: true };
 }
 
 export async function getProjectFull(ownerId: string, id: string) {
-  const project = await getProject(ownerId, id);
+  const state = await readState();
+  const project = state.projects.find((p) => p.ownerId === ownerId && p.id === id);
   if (!project) return null;
-  const [scenes, jobs, history] = await Promise.all([listScenes(ownerId, id), listJobs(ownerId, id), listSnapshots(ownerId, id, 20)]);
+  const scenes = state.scenes.filter((s) => s.ownerId === ownerId && s.projectId === id).sort((a, b) => a.position - b.position).map(publicScene);
+  const jobs = state.jobs.filter((j) => j.ownerId === ownerId && j.projectId === id).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).map(publicJob);
+  const history = state.snapshots.filter((s) => s.ownerId === ownerId && s.projectId === id).sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 20).map(publicSnapshot);
   return {
-    ...project, scenes, jobs, history,
+    ...publicProject(project), scenes, jobs, history,
     summary: {
       sceneCount: scenes.length,
       imageCount: scenes.filter((s) => s.imageUrl).length,
@@ -430,24 +538,35 @@ export async function getProjectFull(ownerId: string, id: string) {
 }
 
 export async function startProject(ownerId: string, id: string) {
-  const full = await getProjectFull(ownerId, id);
-  if (!full) return null;
+  const state = await readState();
+  const project = state.projects.find((p) => p.ownerId === ownerId && p.id === id);
+  if (!project) return null;
+  const scenes = state.scenes.filter((s) => s.ownerId === ownerId && s.projectId === id);
+  const jobs = state.jobs.filter((j) => j.ownerId === ownerId && j.projectId === id);
   let step = "IDEIA";
-  if (full.ideaText) step = "ROTEIRO";
-  if (full.scriptText) step = "CENAS";
-  if (full.scenes.length) step = "PROMPTS";
-  if (full.scenes.some((s) => s.prompt)) step = "IMAGENS";
-  if (full.jobs.some((j) => j.status === "PENDING" || j.status === "RUNNING")) step = "PRODUCAO";
-  return updateProject(ownerId, id, { readyForAi: true, status: "READY", currentStep: step });
+  if (project.ideaText) step = "ROTEIRO";
+  if (project.scriptText) step = "CENAS";
+  if (scenes.length) step = "PROMPTS";
+  if (scenes.some((s) => s.prompt)) step = "IMAGENS";
+  if (jobs.some((j) => j.status === "PENDING" || j.status === "RUNNING")) step = "PRODUCAO";
+  project.readyForAi = true; project.status = "READY"; project.currentStep = step; project.updatedAt = new Date().toISOString();
+  await writeState(state);
+  return publicProject(project);
 }
 
 export async function pauseProject(ownerId: string, id: string) {
-  return updateProject(ownerId, id, { readyForAi: false, status: "PAUSED" });
+  const state = await readState();
+  const project = state.projects.find((p) => p.ownerId === ownerId && p.id === id);
+  if (!project) return null;
+  project.readyForAi = false; project.status = "PAUSED"; project.updatedAt = new Date().toISOString();
+  await writeState(state);
+  return publicProject(project);
 }
 
 export async function fullContext(ownerId: string) {
-  const projects = await listProjects(ownerId, 100);
+  const state = await readState();
+  const projects = state.projects.filter((p) => p.ownerId === ownerId).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, 100).map(publicProject);
   const ready = projects.filter((p) => p.readyForAi);
-  const pendingJobs = await listJobs(ownerId, undefined, "PENDING", 500);
+  const pendingJobs = state.jobs.filter((j) => j.ownerId === ownerId && j.status === "PENDING").sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, 500).map(publicJob);
   return { counts: { projects: projects.length, ready: ready.length, pendingJobs: pendingJobs.length }, readyProjects: ready, projects, pendingJobs };
 }
