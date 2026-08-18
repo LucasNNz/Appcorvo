@@ -130,10 +130,51 @@ function firstEnv(value: string | undefined) {
   return String(value || "").split(/\r?\n/)[0]?.trim() || "";
 }
 
+type DetectedEnv = { name: string; value: string };
+
+function normalizedEnvName(name: string) {
+  return name.toUpperCase().replace(/[^A-Z0-9]/g, "");
+}
+
+function findEnv(candidates: string[], fuzzy?: (normalizedName: string) => boolean): DetectedEnv | null {
+  for (const name of candidates) {
+    const value = firstEnv(process.env[name]);
+    if (value) return { name, value };
+  }
+  if (!fuzzy) return null;
+  for (const [name, raw] of Object.entries(process.env)) {
+    const value = firstEnv(raw);
+    if (!value) continue;
+    if (fuzzy(normalizedEnvName(name))) return { name, value };
+  }
+  return null;
+}
+
+function detectR2Env() {
+  const access = findEnv(
+    ["R2_ACCESS_KEY_ID", "CLOUDFLARE_R2_ACCESS_KEY_ID", "AWS_ACCESS_KEY_ID", "R2_ACCESS_KEY"],
+    (n) => (n.includes("R2") || n.includes("AWS")) && n.includes("ACCESS") && n.includes("KEY") && !n.includes("SECRET")
+  );
+  const secret = findEnv(
+    ["R2_SECRET_ACCESS_KEY", "CLOUDFLARE_R2_SECRET_ACCESS_KEY", "AWS_SECRET_ACCESS_KEY", "R2_SECRET_KEY"],
+    (n) => (n.includes("R2") || n.includes("AWS")) && n.includes("SECRET") && n.includes("KEY")
+  );
+  const source = findEnv(
+    ["R2_S3_URL", "R2_ENDPOINT", "CLOUDFLARE_R2_ENDPOINT", "AWS_ENDPOINT_URL_S3", "AWS_ENDPOINT_URL"],
+    (n) => (n.includes("R2") || n.includes("S3")) && (n.includes("ENDPOINT") || n.endsWith("URL"))
+  );
+  const bucket = findEnv(
+    ["R2_BUCKET_NAME", "R2_BUCKET", "CLOUDFLARE_R2_BUCKET", "AWS_S3_BUCKET", "S3_BUCKET"],
+    (n) => (n.includes("R2") || n.includes("S3")) && n.includes("BUCKET")
+  );
+  return { access, secret, source, bucket };
+}
+
 function r2Config() {
-  const accessKeyId = firstEnv(process.env.R2_ACCESS_KEY_ID);
-  const secretAccessKey = firstEnv(process.env.R2_SECRET_ACCESS_KEY);
-  const source = firstEnv(process.env.R2_S3_URL) || firstEnv(process.env.R2_ENDPOINT) || DEFAULT_R2_S3_URL;
+  const detected = detectR2Env();
+  const accessKeyId = detected.access?.value || "";
+  const secretAccessKey = detected.secret?.value || "";
+  const source = detected.source?.value || DEFAULT_R2_S3_URL;
 
   let url: URL;
   try {
@@ -144,13 +185,44 @@ function r2Config() {
   if (url.protocol !== "https:") throw new Error("R2_ENDPOINT_INVALID: o endpoint R2 precisa usar HTTPS.");
 
   const pathBucket = url.pathname.split("/").filter(Boolean)[0] || "";
-  const bucket = firstEnv(process.env.R2_BUCKET_NAME) || pathBucket || "corvoquiz-prod";
+  const bucket = detected.bucket?.value || pathBucket || "corvoquiz-prod";
   const endpoint = `${url.protocol}//${url.host}`;
 
   if (!accessKeyId || !secretAccessKey) {
-    throw new Error("R2_NOT_CONFIGURED: configure R2_ACCESS_KEY_ID e R2_SECRET_ACCESS_KEY na Vercel e faça novo deploy.");
+    const found = Object.keys(process.env).filter((name) => /R2|AWS.*(ACCESS|SECRET)|S3/i.test(name)).sort();
+    const foundText = found.length ? ` Variáveis relacionadas detectadas: ${found.join(", ")}.` : " Nenhuma variável R2/S3 foi carregada neste deployment.";
+    throw new Error(`R2_NOT_CONFIGURED: credenciais S3 não carregadas no deployment atual.${foundText} Salve na Vercel e faça Redeploy.`);
   }
-  return { accessKeyId, secretAccessKey, endpoint, bucket };
+  return {
+    accessKeyId, secretAccessKey, endpoint, bucket,
+    detected: {
+      accessKeyEnv: detected.access?.name || "",
+      secretKeyEnv: detected.secret?.name || "",
+      endpointEnv: detected.source?.name || "DEFAULT_R2_S3_URL",
+      bucketEnv: detected.bucket?.name || (pathBucket ? detected.source?.name || "DEFAULT_R2_S3_URL" : "DEFAULT_BUCKET"),
+    },
+  };
+}
+
+export function r2Diagnostics() {
+  const detected = detectR2Env();
+  let endpoint = "https://34da8bbc6302e3c68edf3a36f1569668.r2.cloudflarestorage.com";
+  let bucket = detected.bucket?.value || "corvoquiz-prod";
+  const source = detected.source?.value || DEFAULT_R2_S3_URL;
+  try {
+    const url = new URL(source);
+    endpoint = `${url.protocol}//${url.host}`;
+    bucket = detected.bucket?.value || url.pathname.split("/").filter(Boolean)[0] || "corvoquiz-prod";
+  } catch {}
+  return {
+    accessKeyLoaded: Boolean(detected.access?.value),
+    secretKeyLoaded: Boolean(detected.secret?.value),
+    accessKeyEnv: detected.access?.name || "",
+    secretKeyEnv: detected.secret?.name || "",
+    endpointEnv: detected.source?.name || "DEFAULT_R2_S3_URL",
+    bucketEnv: detected.bucket?.name || "AUTO/DEFAULT",
+    endpoint, bucket,
+  };
 }
 
 let cachedR2Client: S3Client | null = null;
@@ -262,7 +334,8 @@ export async function ensureSchema() {
   if (!state.projects.length && !state.scenes.length && !state.jobs.length && !state.snapshots.length) {
     await writeState(state);
   }
-  return { storage: "cloudflare-r2-s3", bucket: r2Config().bucket, ready: true };
+  const config = r2Config();
+  return { storage: "cloudflare-r2-s3", bucket: config.bucket, ready: true, detected: config.detected };
 }
 
 export function authorize(request: Request) {

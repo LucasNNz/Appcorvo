@@ -5,7 +5,7 @@ export async function GET(request: Request) {
   if (!configured) {
     return Response.json({
       ok: false, code: "MCP_KEY_NOT_CONFIGURED",
-      message: "App_key_corvoapp não está disponível neste deployment. Salve a variável na Vercel e faça um novo deploy."
+      message: "App_key_corvoapp não foi carregada neste deployment. Salve a variável na Vercel e faça Redeploy."
     }, { status: 503 });
   }
 
@@ -19,14 +19,19 @@ export async function GET(request: Request) {
 
   try {
     const s = await import("../../../lib/corvo-store");
-    await s.ensureSchema();
+    const schema = await s.ensureSchema();
+    const after = s.r2Diagnostics();
     return Response.json({
       ok: true, code: "READY", envName: "App_key_corvoapp", storage: "cloudflare-r2-s3",
-      message: "Chave MCP validada e Cloudflare R2 pronto."
+      r2: after,
+      detected: schema.detected,
+      message: `Chave MCP validada. R2 conectado via ${after.accessKeyEnv || "credencial detectada"} + ${after.secretKeyEnv || "secret detectada"}.`
     });
   } catch (error) {
+    const s = await import("../../../lib/corvo-store");
     return Response.json({
       ok: false, code: "STORAGE_NOT_READY",
+      r2: s.r2Diagnostics(),
       message: error instanceof Error ? error.message : "Falha ao validar Cloudflare R2"
     }, { status: 503 });
   }
