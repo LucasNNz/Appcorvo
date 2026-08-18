@@ -1,3 +1,5 @@
+# CORVO ROTEIRO MVP V0.3.2 — Vercel Clean
+
 # CORVO ROTEIRO MVP V0.3.1 — Vercel Build Fix
 
 Correção do build nativo da Vercel/Next.js.
@@ -7,7 +9,7 @@ Correção do build nativo da Vercel/Next.js.
 - O MCP oficial agora existe somente em `app/api/mcp/route.ts`.
 - `dynamic = "force-dynamic"` é declarado diretamente no mesmo Route Handler, sem reexportação.
 - Removido `app/mcp/route.ts` duplicado.
-- Removido `postcss.config.mjs` que referenciava `@tailwindcss/postcss` sem o pacote instalado.
+- Removida a configuração PostCSS/Tailwind antiga; esta versão usa CSS puro.
 - Como a interface usa CSS puro, o Next.js usa o processamento CSS padrão sem Tailwind/PostCSS customizado.
 - Mantido Next.js nativo na Vercel (`next build` → `.next`).
 - Mantidas as 23 ferramentas MCP e histórico/rollback.
