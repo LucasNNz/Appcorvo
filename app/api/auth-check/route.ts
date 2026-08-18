@@ -1,7 +1,7 @@
 export const dynamic = "force-dynamic";
 
 export async function GET(request: Request) {
-  const configured = process.env.App_key_corvoapp?.trim();
+  const configured = String(process.env.App_key_corvoapp || "").split(/\r?\n/)[0]?.trim() || "";
   if (!configured) {
     return Response.json({
       ok: false, code: "MCP_KEY_NOT_CONFIGURED",
@@ -24,8 +24,8 @@ export async function GET(request: Request) {
     return Response.json({
       ok: true, code: "READY", envName: "App_key_corvoapp", storage: "cloudflare-r2-s3",
       r2: after,
-      detected: schema.detected,
-      message: `Chave MCP validada. R2 conectado via ${after.accessKeyEnv || "credencial detectada"} + ${after.secretKeyEnv || "secret detectada"}.`
+      fixed: { endpoint: after.endpoint, bucket: after.bucket, region: after.region, statePath: after.statePath },
+      message: "Chave MCP validada. R2 conectado com R2_ACCESS_KEY_ID + R2_SECRET_ACCESS_KEY."
     });
   } catch (error) {
     const s = await import("../../../lib/corvo-store");

@@ -123,105 +123,45 @@ type CorvoState = {
 };
 
 const STATE_PATH = "corvo-core/state-v1.json";
-const DEFAULT_R2_S3_URL = "https://34da8bbc6302e3c68edf3a36f1569668.r2.cloudflarestorage.com/corvoquiz-prod";
-const emptyState = (): CorvoState => ({ version: 1, projects: [], scenes: [], jobs: [], snapshots: [] });
+const R2_ENDPOINT = "https://34da8bbc6302e3c68edf3a36f1569668.r2.cloudflarestorage.com";
+const R2_BUCKET = "corvoquiz-prod";
+const R2_REGION = "auto";
 
-function firstEnv(value: string | undefined) {
+function cleanEnv(value: string | undefined) {
   return String(value || "").split(/\r?\n/)[0]?.trim() || "";
 }
 
-type DetectedEnv = { name: string; value: string };
-
-function normalizedEnvName(name: string) {
-  return name.toUpperCase().replace(/[^A-Z0-9]/g, "");
-}
-
-function findEnv(candidates: string[], fuzzy?: (normalizedName: string) => boolean): DetectedEnv | null {
-  for (const name of candidates) {
-    const value = firstEnv(process.env[name]);
-    if (value) return { name, value };
-  }
-  if (!fuzzy) return null;
-  for (const [name, raw] of Object.entries(process.env)) {
-    const value = firstEnv(raw);
-    if (!value) continue;
-    if (fuzzy(normalizedEnvName(name))) return { name, value };
-  }
-  return null;
-}
-
-function detectR2Env() {
-  const access = findEnv(
-    ["R2_ACCESS_KEY_ID", "CLOUDFLARE_R2_ACCESS_KEY_ID", "AWS_ACCESS_KEY_ID", "R2_ACCESS_KEY"],
-    (n) => (n.includes("R2") || n.includes("AWS")) && n.includes("ACCESS") && n.includes("KEY") && !n.includes("SECRET")
-  );
-  const secret = findEnv(
-    ["R2_SECRET_ACCESS_KEY", "CLOUDFLARE_R2_SECRET_ACCESS_KEY", "AWS_SECRET_ACCESS_KEY", "R2_SECRET_KEY"],
-    (n) => (n.includes("R2") || n.includes("AWS")) && n.includes("SECRET") && n.includes("KEY")
-  );
-  const source = findEnv(
-    ["R2_S3_URL", "R2_ENDPOINT", "CLOUDFLARE_R2_ENDPOINT", "AWS_ENDPOINT_URL_S3", "AWS_ENDPOINT_URL"],
-    (n) => (n.includes("R2") || n.includes("S3")) && (n.includes("ENDPOINT") || n.endsWith("URL"))
-  );
-  const bucket = findEnv(
-    ["R2_BUCKET_NAME", "R2_BUCKET", "CLOUDFLARE_R2_BUCKET", "AWS_S3_BUCKET", "S3_BUCKET"],
-    (n) => (n.includes("R2") || n.includes("S3")) && n.includes("BUCKET")
-  );
-  return { access, secret, source, bucket };
-}
-
 function r2Config() {
-  const detected = detectR2Env();
-  const accessKeyId = detected.access?.value || "";
-  const secretAccessKey = detected.secret?.value || "";
-  const source = detected.source?.value || DEFAULT_R2_S3_URL;
-
-  let url: URL;
-  try {
-    url = new URL(source);
-  } catch {
-    throw new Error("R2_ENDPOINT_INVALID: endpoint R2 inválido.");
-  }
-  if (url.protocol !== "https:") throw new Error("R2_ENDPOINT_INVALID: o endpoint R2 precisa usar HTTPS.");
-
-  const pathBucket = url.pathname.split("/").filter(Boolean)[0] || "";
-  const bucket = detected.bucket?.value || pathBucket || "corvoquiz-prod";
-  const endpoint = `${url.protocol}//${url.host}`;
+  const accessKeyId = cleanEnv(process.env.R2_ACCESS_KEY_ID);
+  const secretAccessKey = cleanEnv(process.env.R2_SECRET_ACCESS_KEY);
 
   if (!accessKeyId || !secretAccessKey) {
-    const found = Object.keys(process.env).filter((name) => /R2|AWS.*(ACCESS|SECRET)|S3/i.test(name)).sort();
-    const foundText = found.length ? ` Variáveis relacionadas detectadas: ${found.join(", ")}.` : " Nenhuma variável R2/S3 foi carregada neste deployment.";
-    throw new Error(`R2_NOT_CONFIGURED: credenciais S3 não carregadas no deployment atual.${foundText} Salve na Vercel e faça Redeploy.`);
+    const missing = [
+      !accessKeyId ? "R2_ACCESS_KEY_ID" : "",
+      !secretAccessKey ? "R2_SECRET_ACCESS_KEY" : "",
+    ].filter(Boolean).join(" e ");
+    throw new Error(`R2_NOT_CONFIGURED: ${missing} não carregada(s) neste deployment. Salve exatamente essas variáveis na Vercel e faça Redeploy.`);
   }
+
   return {
-    accessKeyId, secretAccessKey, endpoint, bucket,
-    detected: {
-      accessKeyEnv: detected.access?.name || "",
-      secretKeyEnv: detected.secret?.name || "",
-      endpointEnv: detected.source?.name || "DEFAULT_R2_S3_URL",
-      bucketEnv: detected.bucket?.name || (pathBucket ? detected.source?.name || "DEFAULT_R2_S3_URL" : "DEFAULT_BUCKET"),
-    },
+    accessKeyId,
+    secretAccessKey,
+    endpoint: R2_ENDPOINT,
+    bucket: R2_BUCKET,
+    region: R2_REGION,
   };
 }
 
 export function r2Diagnostics() {
-  const detected = detectR2Env();
-  let endpoint = "https://34da8bbc6302e3c68edf3a36f1569668.r2.cloudflarestorage.com";
-  let bucket = detected.bucket?.value || "corvoquiz-prod";
-  const source = detected.source?.value || DEFAULT_R2_S3_URL;
-  try {
-    const url = new URL(source);
-    endpoint = `${url.protocol}//${url.host}`;
-    bucket = detected.bucket?.value || url.pathname.split("/").filter(Boolean)[0] || "corvoquiz-prod";
-  } catch {}
   return {
-    accessKeyLoaded: Boolean(detected.access?.value),
-    secretKeyLoaded: Boolean(detected.secret?.value),
-    accessKeyEnv: detected.access?.name || "",
-    secretKeyEnv: detected.secret?.name || "",
-    endpointEnv: detected.source?.name || "DEFAULT_R2_S3_URL",
-    bucketEnv: detected.bucket?.name || "AUTO/DEFAULT",
-    endpoint, bucket,
+    accessKeyLoaded: Boolean(cleanEnv(process.env.R2_ACCESS_KEY_ID)),
+    secretKeyLoaded: Boolean(cleanEnv(process.env.R2_SECRET_ACCESS_KEY)),
+    accessKeyEnv: "R2_ACCESS_KEY_ID",
+    secretKeyEnv: "R2_SECRET_ACCESS_KEY",
+    endpoint: R2_ENDPOINT,
+    bucket: R2_BUCKET,
+    region: R2_REGION,
+    statePath: STATE_PATH,
   };
 }
 
@@ -235,7 +175,7 @@ function r2Client() {
     cachedR2Client?.destroy();
     cachedR2Key = key;
     cachedR2Client = new S3Client({
-      region: "auto",
+      region: config.region,
       endpoint: config.endpoint,
       credentials: { accessKeyId: config.accessKeyId, secretAccessKey: config.secretAccessKey },
       forcePathStyle: true,
@@ -335,16 +275,13 @@ export async function ensureSchema() {
     await writeState(state);
   }
   const config = r2Config();
-  return { storage: "cloudflare-r2-s3", bucket: config.bucket, ready: true, detected: config.detected };
+  return { storage: "cloudflare-r2-s3", bucket: config.bucket, endpoint: config.endpoint, region: config.region, ready: true };
 }
 
 export function authorize(request: Request) {
-  const configured = process.env.App_key_corvoapp?.trim();
-  const ownerEmail = process.env.MCP_OWNER_EMAIL?.trim().toLowerCase();
+  const configured = cleanEnv(process.env.App_key_corvoapp);
   const auth = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "").trim();
   const key = new URL(request.url).searchParams.get("key")?.trim();
-  const email = request.headers.get("oai-authenticated-user-email")?.trim().toLowerCase();
-  if (email && ownerEmail && email === ownerEmail) return { ok: true, ownerId: "corvo-owner", mode: "chatgpt-user" };
   if (configured && (auth === configured || key === configured)) return { ok: true, ownerId: "corvo-owner", mode: "access-token" };
   return { ok: false, ownerId: "", mode: "none" };
 }
