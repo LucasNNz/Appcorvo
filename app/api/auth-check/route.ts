@@ -21,13 +21,13 @@ export async function GET(request: Request) {
     const s = await import("../../../lib/corvo-store");
     await s.ensureSchema();
     return Response.json({
-      ok: true, code: "READY", envName: "App_key_corvoapp", storage: "vercel-blob",
-      message: "Chave MCP validada e armazenamento Vercel pronto."
+      ok: true, code: "READY", envName: "App_key_corvoapp", storage: "cloudflare-r2-s3",
+      message: "Chave MCP validada e Cloudflare R2 pronto."
     });
   } catch (error) {
     return Response.json({
       ok: false, code: "STORAGE_NOT_READY",
-      message: error instanceof Error ? error.message : "Falha ao validar armazenamento Vercel"
+      message: error instanceof Error ? error.message : "Falha ao validar Cloudflare R2"
     }, { status: 503 });
   }
 }

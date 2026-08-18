@@ -1,4 +1,4 @@
-import { get, put } from "@vercel/blob";
+import { GetObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 
 export type ProjectInput = {
   id?: string;
@@ -123,21 +123,74 @@ type CorvoState = {
 };
 
 const STATE_PATH = "corvo-core/state-v1.json";
+const DEFAULT_R2_S3_URL = "https://34da8bbc6302e3c68edf3a36f1569668.r2.cloudflarestorage.com/corvoquiz-prod";
 const emptyState = (): CorvoState => ({ version: 1, projects: [], scenes: [], jobs: [], snapshots: [] });
+
+function firstEnv(value: string | undefined) {
+  return String(value || "").split(/\r?\n/)[0]?.trim() || "";
+}
+
+function r2Config() {
+  const accessKeyId = firstEnv(process.env.R2_ACCESS_KEY_ID);
+  const secretAccessKey = firstEnv(process.env.R2_SECRET_ACCESS_KEY);
+  const source = firstEnv(process.env.R2_S3_URL) || firstEnv(process.env.R2_ENDPOINT) || DEFAULT_R2_S3_URL;
+
+  let url: URL;
+  try {
+    url = new URL(source);
+  } catch {
+    throw new Error("R2_ENDPOINT_INVALID: endpoint R2 inválido.");
+  }
+  if (url.protocol !== "https:") throw new Error("R2_ENDPOINT_INVALID: o endpoint R2 precisa usar HTTPS.");
+
+  const pathBucket = url.pathname.split("/").filter(Boolean)[0] || "";
+  const bucket = firstEnv(process.env.R2_BUCKET_NAME) || pathBucket || "corvoquiz-prod";
+  const endpoint = `${url.protocol}//${url.host}`;
+
+  if (!accessKeyId || !secretAccessKey) {
+    throw new Error("R2_NOT_CONFIGURED: configure R2_ACCESS_KEY_ID e R2_SECRET_ACCESS_KEY na Vercel e faça novo deploy.");
+  }
+  return { accessKeyId, secretAccessKey, endpoint, bucket };
+}
+
+let cachedR2Client: S3Client | null = null;
+let cachedR2Key = "";
+
+function r2Client() {
+  const config = r2Config();
+  const key = `${config.endpoint}|${config.bucket}|${config.accessKeyId}`;
+  if (!cachedR2Client || cachedR2Key !== key) {
+    cachedR2Client?.destroy();
+    cachedR2Key = key;
+    cachedR2Client = new S3Client({
+      region: "auto",
+      endpoint: config.endpoint,
+      credentials: { accessKeyId: config.accessKeyId, secretAccessKey: config.secretAccessKey },
+      forcePathStyle: true,
+      maxAttempts: 2,
+    });
+  }
+  return { config, client: cachedR2Client };
+}
 
 function storageError(error: unknown): Error {
   const raw = error instanceof Error ? error.message : String(error || "erro desconhecido");
-  if (/blob|token|oidc|store|storage|not configured|environment/i.test(raw)) {
-    return new Error("Armazenamento Vercel Blob não conectado ao projeto. Crie/conecte um Blob privado em Storage na Vercel e faça novo deploy.");
-  }
-  return error instanceof Error ? error : new Error(raw);
+  const low = raw.toLowerCase();
+  if (raw.startsWith("R2_")) return error instanceof Error ? error : new Error(raw);
+  if (low.includes("invalidaccesskeyid")) return new Error("R2_ACCESS_KEY_INVALID: o Access Key ID do R2 foi recusado.");
+  if (low.includes("signaturedoesnotmatch") || low.includes("signature")) return new Error("R2_SIGNATURE_FAILED: confira R2_ACCESS_KEY_ID e R2_SECRET_ACCESS_KEY; as duas credenciais precisam pertencer ao mesmo token R2.");
+  if (low.includes("nosuchbucket") || low.includes("bucket does not exist")) return new Error("R2_BUCKET_NOT_FOUND: o bucket corvoquiz-prod não foi encontrado.");
+  if (low.includes("accessdenied") || low.includes("forbidden") || low.includes("403")) return new Error("R2_ACCESS_DENIED: o token R2 precisa de Object Read & Write para o bucket corvoquiz-prod.");
+  if (low.includes("enotfound") || low.includes("getaddrinfo") || low.includes("eai_again")) return new Error("R2_DNS_FAILED: não foi possível resolver o endpoint S3 do R2.");
+  return new Error(`R2_STORAGE_ERROR: ${raw}`);
 }
 
 async function readState(): Promise<CorvoState> {
   try {
-    const result = await get(STATE_PATH, { access: "private" });
-    if (!result || result.statusCode !== 200 || !result.stream) return emptyState();
-    const text = await new Response(result.stream).text();
+    const { client, config } = r2Client();
+    const result = await client.send(new GetObjectCommand({ Bucket: config.bucket, Key: STATE_PATH }));
+    if (!result.Body) return emptyState();
+    const text = await result.Body.transformToString("utf-8");
     if (!text.trim()) return emptyState();
     const parsed = JSON.parse(text) as Partial<CorvoState>;
     return {
@@ -148,22 +201,24 @@ async function readState(): Promise<CorvoState> {
       snapshots: Array.isArray(parsed.snapshots) ? parsed.snapshots as Snapshot[] : [],
     };
   } catch (error) {
-    // A store conectado pode ainda não possuir o arquivo inicial.
-    const message = error instanceof Error ? error.message : String(error);
-    if (/not found|404/i.test(message)) return emptyState();
+    const e = error as { name?: string; $metadata?: { httpStatusCode?: number }; message?: string };
+    if (e?.name === "NoSuchKey" || e?.name === "NotFound" || e?.$metadata?.httpStatusCode === 404 || /NoSuchKey/i.test(String(e?.message || ""))) {
+      return emptyState();
+    }
     throw storageError(error);
   }
 }
 
 async function writeState(state: CorvoState): Promise<void> {
   try {
-    await put(STATE_PATH, JSON.stringify(state), {
-      access: "private",
-      addRandomSuffix: false,
-      allowOverwrite: true,
-      contentType: "application/json",
-      cacheControlMaxAge: 60,
-    });
+    const { client, config } = r2Client();
+    await client.send(new PutObjectCommand({
+      Bucket: config.bucket,
+      Key: STATE_PATH,
+      Body: JSON.stringify(state),
+      ContentType: "application/json; charset=utf-8",
+      CacheControl: "no-store",
+    }));
   } catch (error) {
     throw storageError(error);
   }
@@ -207,7 +262,7 @@ export async function ensureSchema() {
   if (!state.projects.length && !state.scenes.length && !state.jobs.length && !state.snapshots.length) {
     await writeState(state);
   }
-  return { storage: "vercel-blob", ready: true };
+  return { storage: "cloudflare-r2-s3", bucket: r2Config().bucket, ready: true };
 }
 
 export function authorize(request: Request) {

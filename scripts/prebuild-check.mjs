@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 const root = process.cwd();
-const version = 'CORVO ROTEIRO MVP V0.3.8 — VERCEL ONLY';
+const version = 'CORVO ROTEIRO MVP V0.3.9 — R2 S3';
 console.log(`\n=== ${version} ===`);
 
 function remove(rel) {

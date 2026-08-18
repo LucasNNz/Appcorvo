@@ -1,6 +1,6 @@
 {
   "name": "corvo-roteiro-mvp",
-  "version": "0.3.8",
+  "version": "0.3.9",
   "private": true,
   "engines": {
     "node": ">=22.13.0"
@@ -15,7 +15,7 @@
     "next": "16.2.6",
     "react": "19.2.6",
     "react-dom": "19.2.6",
-    "@vercel/blob": "^2.3.0"
+    "@aws-sdk/client-s3": "^3.0.0"
   },
   "devDependencies": {
     "@types/node": "22.19.19",
