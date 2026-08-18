@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 const root = process.cwd();
-const version = 'CORVO ROTEIRO MVP V0.4.3 — EMBEDDED PRIVATE CONFIG';
+const version = 'CORVO ROTEIRO MVP V0.4.4 — EMBEDDED CONFIG SAFE-WRITE';
 console.log(`\n=== ${version} ===`);
 
 function remove(rel) {
@@ -78,4 +78,11 @@ if (direct['@tailwindcss/postcss'] || direct['tailwindcss'] || direct['vite']) {
   throw new Error('Build bloqueado: dependência legada Tailwind/Vite reapareceu no package.json');
 }
 
-console.log('Preflight OK: fontes legadas removidas; somente o MVP Next atual seguirá para compilação.');
+const privateConfig = path.join(root, 'lib', 'corvo-private-config.ts');
+if (!fs.existsSync(privateConfig)) throw new Error('Config privada ausente: lib/corvo-private-config.ts');
+const privateText = fs.readFileSync(privateConfig, 'utf8');
+if (/COLE_AQUI_/.test(privateText)) throw new Error('Build bloqueado: credenciais ainda estão como placeholder.');
+if (!/r2SecretAccessKey:\s*R2_SECRET_PARTS\.join\(""\)/.test(privateText)) {
+  throw new Error('Build bloqueado: Secret R2 deve usar gravação segmentada segura.');
+}
+console.log('Preflight OK: fontes legadas removidas; configuração privada validada; build liberado.');

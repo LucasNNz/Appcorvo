@@ -1,4 +1,4 @@
-# CORVO ROTEIRO MVP V0.4.3 — Embedded Private Config
+# CORVO ROTEIRO MVP V0.4.4 — Embedded Private Config
 
 Esta versão elimina a dependência de Environment Variables da Vercel para MCP e R2.
 
@@ -32,3 +32,10 @@ Depois faça o deploy da pasta configurada.
 Não envie essa versão configurada para um repositório GitHub público. Use um repositório privado ou deploy direto para a Vercel.
 
 A chave continua sendo digitada uma única vez no botão MCP do navegador e fica salva localmente para ligar/desligar sem apagar.
+
+
+## V0.4.4
+- Corrige gravação de credenciais com quebra de linha.
+- Secret R2 é dividido em partes no TypeScript e remontado no servidor.
+- Configurador remove CR/LF e espaços acidentais de Access/Secret.
+- Prebuild bloqueia placeholders e configuração insegura.
