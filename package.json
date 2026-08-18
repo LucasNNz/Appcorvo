@@ -1,6 +1,6 @@
 {
   "name": "corvo-roteiro-mvp",
-  "version": "0.4.2",
+  "version": "0.4.3",
   "private": true,
   "engines": {
     "node": ">=22.13.0"
@@ -9,7 +9,8 @@
     "dev": "next dev",
     "build": "node scripts/prebuild-check.mjs && next build",
     "start": "next start",
-    "lint": "eslint . --ignore-pattern .next"
+    "lint": "eslint . --ignore-pattern .next",
+    "configure": "node scripts/configure-embedded-secrets.mjs"
   },
   "dependencies": {
     "next": "16.2.6",

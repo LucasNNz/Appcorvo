@@ -1,63 +1,34 @@
-# CORVO ROTEIRO MVP V0.4.2 — R2 FIXED CONFIG
+# CORVO ROTEIRO MVP V0.4.3 — Embedded Private Config
 
-MVP pessoal do novo Corvo: Next.js na Vercel, MCP direto e persistência privada no Cloudflare R2 pela interface S3.
+Esta versão elimina a dependência de Environment Variables da Vercel para MCP e R2.
 
-## Configuração fixa no código
+## Configuração rápida
 
-Estes valores já estão embutidos e não precisam existir como variáveis na Vercel:
+No Windows, extraia o ZIP e execute:
 
-```text
-R2 endpoint: https://34da8bbc6302e3c68edf3a36f1569668.r2.cloudflarestorage.com
-R2 bucket: corvoquiz-prod
-R2 region: auto
-Estado: corvo-core/state-v1.json
-MCP route: /api/mcp
-```
+`CONFIGURAR_CORVO.bat`
 
-## ÚNICAS 3 variáveis da Vercel
+Informe localmente:
 
-Configure exatamente estes nomes:
+1. chave MCP
+2. R2 Access Key ID
+3. R2 Secret Access Key
 
-```text
-App_key_corvoapp=SUA_CHAVE_MCP
-R2_ACCESS_KEY_ID=ACCESS_KEY_ID_DO_TOKEN_R2
-R2_SECRET_ACCESS_KEY=SECRET_ACCESS_KEY_DO_TOKEN_R2
-```
+O script grava os três valores em `lib/corvo-private-config.ts`.
 
-Não há aliases, fallback, auto-detecção ou variáveis alternativas nesta versão.
+Depois faça o deploy da pasta configurada.
 
-Depois de adicionar ou alterar qualquer uma delas, faça um novo Redeploy na Vercel.
+## Configuração fixa do R2
 
-## MCP
+- Endpoint: `https://34da8bbc6302e3c68edf3a36f1569668.r2.cloudflarestorage.com`
+- Bucket: `corvoquiz-prod`
+- Region: `auto`
+- Estado: `corvo-core/state-v1.json`
+- MCP: `/api/mcp`
 
-Endpoint:
+## Segurança
 
-```text
-https://SEU-DOMINIO/api/mcp
-```
+`lib/corvo-private-config.ts` passa a conter credenciais reais depois da configuração.
+Não envie essa versão configurada para um repositório GitHub público. Use um repositório privado ou deploy direto para a Vercel.
 
-Autenticação aceita:
-
-```text
-Authorization: Bearer SUA_CHAVE_MCP
-```
-
-ou, para conexão por URL quando necessário:
-
-```text
-https://SEU-DOMINIO/api/mcp?key=SUA_CHAVE_MCP
-```
-
-A interface salva a chave MCP uma vez no navegador. Desligar a conexão preserva essa chave; ligar novamente apenas reutiliza o valor salvo.
-
-## R2
-
-`R2_ACCESS_KEY_ID` e `R2_SECRET_ACCESS_KEY` precisam pertencer ao mesmo token S3/R2 e o token precisa de Object Read & Write no bucket `corvoquiz-prod`.
-
-Projetos, cenas, jobs e snapshots são persistidos em:
-
-```text
-corvo-core/state-v1.json
-```
-
-O R2 também poderá receber imagens e arquivos do Flow Agent nas próximas etapas.
+A chave continua sendo digitada uma única vez no botão MCP do navegador e fica salva localmente para ligar/desligar sem apagar.

@@ -1,3 +1,4 @@
+import { CORVO_PRIVATE_CONFIG } from "./corvo-private-config";
 import { GetObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 
 export type ProjectInput = {
@@ -136,15 +137,15 @@ function cleanEnv(value: string | undefined) {
 }
 
 function r2Config() {
-  const accessKeyId = cleanEnv(process.env.R2_ACCESS_KEY_ID);
-  const secretAccessKey = cleanEnv(process.env.R2_SECRET_ACCESS_KEY);
+  const accessKeyId = cleanEnv(CORVO_PRIVATE_CONFIG.r2AccessKeyId);
+  const secretAccessKey = cleanEnv(CORVO_PRIVATE_CONFIG.r2SecretAccessKey);
 
   if (!accessKeyId || !secretAccessKey) {
     const missing = [
-      !accessKeyId ? "R2_ACCESS_KEY_ID" : "",
-      !secretAccessKey ? "R2_SECRET_ACCESS_KEY" : "",
+      !accessKeyId || accessKeyId.startsWith("COLE_AQUI_") ? "R2_ACCESS_KEY_ID" : "",
+      !secretAccessKey || secretAccessKey.startsWith("COLE_AQUI_") ? "R2_SECRET_ACCESS_KEY" : "",
     ].filter(Boolean).join(" e ");
-    throw new Error(`R2_NOT_CONFIGURED: ${missing} não carregada(s) neste deployment. Salve exatamente essas variáveis na Vercel e faça Redeploy.`);
+    throw new Error(`R2_NOT_CONFIGURED: ${missing} ainda não configurada(s) em lib/corvo-private-config.ts. Rode CONFIGURAR_CORVO.bat ou edite o arquivo antes do deploy.`);
   }
 
   return {
@@ -158,10 +159,10 @@ function r2Config() {
 
 export function r2Diagnostics() {
   return {
-    accessKeyLoaded: Boolean(cleanEnv(process.env.R2_ACCESS_KEY_ID)),
-    secretKeyLoaded: Boolean(cleanEnv(process.env.R2_SECRET_ACCESS_KEY)),
-    accessKeyEnv: "R2_ACCESS_KEY_ID",
-    secretKeyEnv: "R2_SECRET_ACCESS_KEY",
+    accessKeyLoaded: Boolean(cleanEnv(CORVO_PRIVATE_CONFIG.r2AccessKeyId)) && !cleanEnv(CORVO_PRIVATE_CONFIG.r2AccessKeyId).startsWith("COLE_AQUI_"),
+    secretKeyLoaded: Boolean(cleanEnv(CORVO_PRIVATE_CONFIG.r2SecretAccessKey)) && !cleanEnv(CORVO_PRIVATE_CONFIG.r2SecretAccessKey).startsWith("COLE_AQUI_"),
+    accessKeyEnv: "embedded:lib/corvo-private-config.ts",
+    secretKeyEnv: "embedded:lib/corvo-private-config.ts",
     endpoint: R2_ENDPOINT,
     bucket: R2_BUCKET,
     region: R2_REGION,
@@ -283,10 +284,10 @@ export async function ensureSchema() {
 }
 
 export function authorize(request: Request) {
-  const configured = cleanEnv(process.env.App_key_corvoapp);
+  const configured = cleanEnv(CORVO_PRIVATE_CONFIG.mcpKey);
   const auth = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "").trim();
   const key = new URL(request.url).searchParams.get("key")?.trim();
-  if (configured && (auth === configured || key === configured)) return { ok: true, ownerId: "corvo-owner", mode: "access-token" };
+  if (configured && !configured.startsWith("COLE_AQUI_") && (auth === configured || key === configured)) return { ok: true, ownerId: "corvo-owner", mode: "access-token" };
   return { ok: false, ownerId: "", mode: "none" };
 }
 

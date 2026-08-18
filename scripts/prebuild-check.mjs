@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 const root = process.cwd();
-const version = 'CORVO ROTEIRO MVP V0.4.2 — R2 FIXED CONFIG';
+const version = 'CORVO ROTEIRO MVP V0.4.3 — EMBEDDED PRIVATE CONFIG';
 console.log(`\n=== ${version} ===`);
 
 function remove(rel) {

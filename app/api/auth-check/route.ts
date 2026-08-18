@@ -1,11 +1,17 @@
+import { CORVO_PRIVATE_CONFIG } from "../../../lib/corvo-private-config";
+
 export const dynamic = "force-dynamic";
 
+function clean(value: string | undefined) {
+  return String(value || "").split(/\r?\n/)[0]?.trim() || "";
+}
+
 export async function GET(request: Request) {
-  const configured = String(process.env.App_key_corvoapp || "").split(/\r?\n/)[0]?.trim() || "";
-  if (!configured) {
+  const configured = clean(CORVO_PRIVATE_CONFIG.mcpKey);
+  if (!configured || configured.startsWith("COLE_AQUI_")) {
     return Response.json({
       ok: false, code: "MCP_KEY_NOT_CONFIGURED",
-      message: "App_key_corvoapp não foi carregada neste deployment. Salve a variável na Vercel e faça Redeploy."
+      message: "A chave MCP ainda não foi gravada em lib/corvo-private-config.ts. Rode CONFIGURAR_CORVO.bat antes do deploy."
     }, { status: 503 });
   }
 
@@ -13,19 +19,19 @@ export async function GET(request: Request) {
   if (supplied !== configured) {
     return Response.json({
       ok: false, code: "MCP_KEY_INVALID",
-      message: "A chave salva no navegador não corresponde a App_key_corvoapp deste deployment."
+      message: "A chave salva neste navegador é diferente da chave MCP embutida no servidor."
     }, { status: 401 });
   }
 
   try {
     const s = await import("../../../lib/corvo-store");
-    const schema = await s.ensureSchema();
+    await s.ensureSchema();
     const after = s.r2Diagnostics();
     return Response.json({
-      ok: true, code: "READY", envName: "App_key_corvoapp", storage: "cloudflare-r2-s3",
+      ok: true, code: "READY", configMode: "embedded-private-config", storage: "cloudflare-r2-s3",
       r2: after,
       fixed: { endpoint: after.endpoint, bucket: after.bucket, region: after.region, statePath: after.statePath },
-      message: "Chave MCP validada. R2 conectado com R2_ACCESS_KEY_ID + R2_SECRET_ACCESS_KEY."
+      message: "Chave MCP validada. R2 conectado usando configuração embutida do servidor."
     });
   } catch (error) {
     const s = await import("../../../lib/corvo-store");
