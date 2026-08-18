@@ -1,4 +1,4 @@
-# CORVO ROTEIRO MVP V0.3.2 — Vercel Clean
+# CORVO ROTEIRO MVP V0.3.3 — Vercel Clean
 
 # CORVO ROTEIRO MVP V0.3.1 — Vercel Build Fix
 
@@ -31,3 +31,7 @@ Correção do build nativo da Vercel/Next.js.
 - `vercel.json` removido: a Vercel detecta Next.js e aplica o preset nativo.
 - `.npmrc` específico do antigo Sites removido.
 - `package-lock.json` podado para conter apenas dependências alcançáveis pelo Next/React/TypeScript atuais.
+
+
+## Vercel self-clean (V0.3.3)
+Se esta versão for copiada por cima de uma pasta antiga, o prebuild remove automaticamente `postcss.config.*` residual e pastas antigas do Sites antes do `next build`. Isso evita que uma configuração Tailwind antiga contamine o deploy atual.
