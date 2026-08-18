@@ -1,28 +1,31 @@
-# CORVO ROTEIRO MVP V0.3 — Vercel Native
+# CORVO ROTEIRO MVP V0.3.1 — Vercel Build Fix
 
-Esta versão corrige a incompatibilidade entre o build `vinext`/Sites e o preset Next.js da Vercel.
+Correção do build nativo da Vercel/Next.js.
 
-## Arquitetura
+## Correções desta versão
 
-- Next.js nativo na Vercel (`next build` → `.next`)
-- Cloudflare D1 continua como única fonte de verdade
-- Backend Next acessa D1 pela API HTTP oficial da Cloudflare
-- MCP direto, sem OpenAI API e sem Bridge
-- 23 ferramentas MCP com histórico, snapshots, rollback, retry/cancel/delete de jobs e controle de cenas/projetos
+- O MCP oficial agora existe somente em `app/api/mcp/route.ts`.
+- `dynamic = "force-dynamic"` é declarado diretamente no mesmo Route Handler, sem reexportação.
+- Removido `app/mcp/route.ts` duplicado.
+- Removido `postcss.config.mjs` que referenciava `@tailwindcss/postcss` sem o pacote instalado.
+- Como a interface usa CSS puro, o Next.js usa o processamento CSS padrão sem Tailwind/PostCSS customizado.
+- Mantido Next.js nativo na Vercel (`next build` → `.next`).
+- Mantidas as 23 ferramentas MCP e histórico/rollback.
 
 ## Variáveis de ambiente na Vercel
 
-Configure em Project Settings → Environment Variables:
-
 - `CLOUDFLARE_ACCOUNT_ID`
 - `CLOUDFLARE_D1_DATABASE_ID`
-- `CLOUDFLARE_D1_API_TOKEN` (D1 Read + D1 Write)
+- `CLOUDFLARE_D1_API_TOKEN`
 - `MCP_ACCESS_TOKEN`
 - `MCP_OWNER_EMAIL` (opcional)
 
-## Deploy
+## Endpoint MCP
 
-A Vercel pode manter o Framework Preset como **Next.js**.
-O comando é `npm run build` e a saída é `.next`.
+`/api/mcp`
 
-Não use mais os scripts `vinext`, `sites-env.sh`, Wrangler ou o antigo artifact `dist/server/index.js` nesta versão.
+### Limpeza adicional para Vercel
+
+- `vercel.json` removido: a Vercel detecta Next.js e aplica o preset nativo.
+- `.npmrc` específico do antigo Sites removido.
+- `package-lock.json` podado para conter apenas dependências alcançáveis pelo Next/React/TypeScript atuais.
