@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 const root = process.cwd();
-const version = 'CORVO ROTEIRO MVP V0.3.6 — MCP KEY TOGGLE';
+const version = 'CORVO ROTEIRO MVP V0.3.7 — MCP DIAGNOSTIC';
 console.log(`\n=== ${version} ===`);
 
 function remove(rel) {

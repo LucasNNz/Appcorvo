@@ -21,6 +21,7 @@
     "app/page.tsx",
     "app/layout.tsx",
     "app/chatgpt-auth.ts",
+    "app/api/auth-check/route.ts",
     "app/api/context/route.ts",
     "app/api/history/route.ts",
     "app/api/jobs/route.ts",
