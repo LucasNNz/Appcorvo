@@ -13,22 +13,32 @@
     "isolatedModules": true,
     "jsx": "react-jsx",
     "incremental": true,
-    "plugins": [
-      {
-        "name": "next"
-      }
-    ],
-    "paths": {
-      "@/*": ["./*"]
-    }
+    "plugins": [{ "name": "next" }],
+    "paths": { "@/*": ["./*"] }
   },
   "include": [
     "next-env.d.ts",
-    "**/*.ts",
-    "**/*.tsx",
+    "app/page.tsx",
+    "app/layout.tsx",
+    "app/chatgpt-auth.ts",
+    "app/api/context/route.ts",
+    "app/api/history/route.ts",
+    "app/api/jobs/route.ts",
+    "app/api/mcp/route.ts",
+    "app/api/projects/route.ts",
+    "app/api/scenes/route.ts",
+    "lib/corvo-store.ts",
     ".next/types/**/*.ts",
-    ".next/dev/types/**/*.ts",
-    "**/*.mts"
+    ".next/dev/types/**/*.ts"
   ],
-  "exclude": ["node_modules"]
+  "exclude": [
+    "node_modules",
+    "build",
+    "worker",
+    "db",
+    "app/api/corvo",
+    ".sites-runtime",
+    ".openai",
+    ".openai-sites"
+  ]
 }
