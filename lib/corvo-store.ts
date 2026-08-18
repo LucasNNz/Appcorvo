@@ -1,5 +1,3 @@
-import { env } from "cloudflare:workers";
-
 export type ProjectInput = {
   id?: string;
   title: string;
@@ -57,14 +55,70 @@ type Statement = {
   first: <T>() => Promise<T | null>;
 };
 type Database = { prepare: (sql: string) => Statement; batch: (statements: Statement[]) => Promise<unknown> };
-type Runtime = { DB?: Database; MCP_ACCESS_TOKEN?: string; MCP_OWNER_EMAIL?: string };
+type D1QueryResult = { results?: Record<string, unknown>[]; success?: boolean };
+type CloudflareEnvelope = { success?: boolean; errors?: Array<{ code?: number; message?: string }>; result?: D1QueryResult[] };
+type BoundStatement = Statement & { __sql?: string; __params?: unknown[] };
 
-const runtime = () => env as unknown as Runtime;
-const database = () => {
-  const db = runtime().DB;
-  if (!db) throw new Error("D1 binding DB is unavailable");
-  return db;
+const requiredEnv = (name: string) => {
+  const value = process.env[name]?.trim();
+  if (!value) throw new Error(`Variável ${name} não configurada no servidor.`);
+  return value;
 };
+
+const normalizeParam = (value: unknown) => {
+  if (value === undefined) return null;
+  if (typeof value === "boolean") return value ? 1 : 0;
+  if (typeof value === "string" || typeof value === "number" || value === null) return value;
+  return String(value);
+};
+
+async function d1Request(payload: { sql: string; params?: unknown[] } | { batch: Array<{ sql: string; params?: unknown[] }> }) {
+  const accountId = requiredEnv("CLOUDFLARE_ACCOUNT_ID");
+  const databaseId = requiredEnv("CLOUDFLARE_D1_DATABASE_ID");
+  const token = requiredEnv("CLOUDFLARE_D1_API_TOKEN");
+  const response = await fetch(`https://api.cloudflare.com/client/v4/accounts/${accountId}/d1/database/${databaseId}/query`, {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+    body: JSON.stringify(payload),
+    cache: "no-store",
+  });
+  const data = await response.json() as CloudflareEnvelope;
+  if (!response.ok || !data.success) {
+    const detail = data.errors?.map((e) => e.message || String(e.code || "erro")).join("; ") || `HTTP ${response.status}`;
+    throw new Error(`Falha ao consultar D1: ${detail}`);
+  }
+  return data.result || [];
+}
+
+class HttpStatement implements BoundStatement {
+  __sql: string;
+  __params: unknown[];
+  constructor(sql: string, params: unknown[] = []) { this.__sql = sql; this.__params = params; }
+  bind(...values: unknown[]) { return new HttpStatement(this.__sql, values.map(normalizeParam)); }
+  async run() { return (await d1Request({ sql: this.__sql, params: this.__params }))[0] || {}; }
+  async all<T>() {
+    const result = (await d1Request({ sql: this.__sql, params: this.__params }))[0];
+    return { results: (result?.results || []) as T[] };
+  }
+  async first<T>() {
+    const result = await this.all<T>();
+    return result.results?.[0] ?? null;
+  }
+}
+
+const httpDatabase: Database = {
+  prepare(sql: string) { return new HttpStatement(sql); },
+  async batch(statements: Statement[]) {
+    const batch = statements.map((statement) => {
+      const bound = statement as BoundStatement;
+      if (!bound.__sql) throw new Error("Statement inválido no batch D1.");
+      return { sql: bound.__sql, params: (bound.__params || []).map(normalizeParam) };
+    });
+    return d1Request({ batch });
+  },
+};
+
+const database = () => httpDatabase;
 
 export const newId = (prefix: string) => `${prefix}_${Date.now()}_${crypto.randomUUID().slice(0, 8)}`;
 
@@ -83,8 +137,8 @@ export async function ensureSchema() {
 }
 
 export function authorize(request: Request) {
-  const configured = runtime().MCP_ACCESS_TOKEN?.trim();
-  const ownerEmail = runtime().MCP_OWNER_EMAIL?.trim().toLowerCase();
+  const configured = process.env.MCP_ACCESS_TOKEN?.trim();
+  const ownerEmail = process.env.MCP_OWNER_EMAIL?.trim().toLowerCase();
   const auth = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "").trim();
   const key = new URL(request.url).searchParams.get("key")?.trim();
   const email = request.headers.get("oai-authenticated-user-email")?.trim().toLowerCase();

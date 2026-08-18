@@ -63,7 +63,7 @@ export async function POST(request: Request) {
   if (body.method === "initialize") return ok(body.id, {
     protocolVersion: "2025-03-26",
     capabilities: { tools: { listChanged: false } },
-    serverInfo: { name: "corvo-roteiro", version: "0.2.0" },
+    serverInfo: { name: "corvo-roteiro", version: "0.3.0" },
     instructions: "Você é o orquestrador único do Corvo. O app é a fonte de verdade de projetos, roteiro, cenas e jobs. Comece por obter_contexto_corvo. Quando houver projeto readyForAi=true, leia-o por completo e continue a etapa atual. Salve cada artefato no Core assim que estiver definido. O Core possui histórico e rollback: alterações semânticas feitas pelas ferramentas principais criam snapshots automáticos; use listar_historico, obter_snapshot e restaurar_snapshot quando o usuário pedir para voltar ou desfazer. Para refazer tarefas de produção use refazer_job. Não dependa da memória da conversa para estado persistente. Jobs de imagem são executados externamente pelo Corvo Agent. Só exclua quando o usuário pedir explicitamente.",
   });
   if (body.method === "notifications/initialized") return new Response(null, { status: 202, headers });
