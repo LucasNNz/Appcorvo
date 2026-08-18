@@ -54,3 +54,18 @@ CREATE TABLE `jobs` (
 );
 --> statement-breakpoint
 CREATE INDEX `jobs_project_updated_idx` ON `jobs` (`owner_id`,`project_id`,`updated_at`);
+--> statement-breakpoint
+CREATE TABLE `snapshots` (
+  `id` text PRIMARY KEY NOT NULL,
+  `owner_id` text NOT NULL,
+  `project_id` text NOT NULL,
+  `label` text DEFAULT '' NOT NULL,
+  `reason` text DEFAULT '' NOT NULL,
+  `source` text DEFAULT 'system' NOT NULL,
+  `project_json` text NOT NULL,
+  `scenes_json` text NOT NULL,
+  `jobs_json` text NOT NULL,
+  `created_at` text NOT NULL
+);
+--> statement-breakpoint
+CREATE INDEX `snapshots_project_created_idx` ON `snapshots` (`owner_id`,`project_id`,`created_at`);
