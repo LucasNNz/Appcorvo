@@ -137,7 +137,7 @@ export async function ensureSchema() {
 }
 
 export function authorize(request: Request) {
-  const configured = process.env.MCP_ACCESS_TOKEN?.trim();
+  const configured = process.env.App_key_corvoapp?.trim() || process.env.MCP_ACCESS_TOKEN?.trim();
   const ownerEmail = process.env.MCP_OWNER_EMAIL?.trim().toLowerCase();
   const auth = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "").trim();
   const key = new URL(request.url).searchParams.get("key")?.trim();

@@ -1,45 +1,38 @@
-# CORVO ROTEIRO MVP V0.3.3 — Vercel Clean
+# CORVO ROTEIRO MVP V0.3.6 — MCP Key Toggle
 
-# CORVO ROTEIRO MVP V0.3.1 — Vercel Build Fix
-
-Correção do build nativo da Vercel/Next.js.
-
-## Correções desta versão
-
-- O MCP oficial agora existe somente em `app/api/mcp/route.ts`.
-- `dynamic = "force-dynamic"` é declarado diretamente no mesmo Route Handler, sem reexportação.
-- Removido `app/mcp/route.ts` duplicado.
-- Removida a configuração PostCSS/Tailwind antiga; esta versão usa CSS puro.
-- Como a interface usa CSS puro, o Next.js usa o processamento CSS padrão sem Tailwind/PostCSS customizado.
-- Mantido Next.js nativo na Vercel (`next build` → `.next`).
-- Mantidas as 23 ferramentas MCP e histórico/rollback.
+MVP Next.js nativo para Vercel, com Core persistente em D1 e controle direto pelo ChatGPT via MCP.
 
 ## Variáveis de ambiente na Vercel
 
 - `CLOUDFLARE_ACCOUNT_ID`
 - `CLOUDFLARE_D1_DATABASE_ID`
 - `CLOUDFLARE_D1_API_TOKEN`
-- `MCP_ACCESS_TOKEN`
-- `MCP_OWNER_EMAIL` (opcional)
+- `App_key_corvoapp` — chave pessoal usada para autenticar o MCP e as chamadas do app ao Core
+- `MCP_OWNER_EMAIL` — opcional; permite autenticação pelo cabeçalho de usuário do ChatGPT quando disponível
+
+`App_key_corvoapp` é lida somente no backend. Ela nunca é enviada automaticamente ao navegador.
+
+## Chave salva no app
+
+Na primeira vez, clique em **MCP DESLIGADO** e cole a mesma chave configurada em `App_key_corvoapp`. O navegador salva a chave em `localStorage`. Depois disso:
+
+- clique em **MCP LIGADO** para desligar;
+- clique em **MCP DESLIGADO** para ligar novamente;
+- desligar não apaga a chave;
+- use **ALTERAR CHAVE SALVA** somente se precisar trocar/remover a chave.
+
+A chave salva é local ao navegador/dispositivo.
 
 ## Endpoint MCP
 
 `/api/mcp`
 
-### Limpeza adicional para Vercel
+O servidor aceita `Authorization: Bearer <App_key_corvoapp>`. Por compatibilidade de migração, `MCP_ACCESS_TOKEN` ainda é aceito como fallback se a nova variável não estiver configurada.
 
-- `vercel.json` removido: a Vercel detecta Next.js e aplica o preset nativo.
-- `.npmrc` específico do antigo Sites removido.
-- `package-lock.json` podado para conter apenas dependências alcançáveis pelo Next/React/TypeScript atuais.
+## Controle MCP
 
+Mantidas as 23 ferramentas do Core: projetos, artefatos, cenas, jobs, retry/cancelamento, snapshots, histórico e rollback.
 
-## Vercel self-clean (V0.3.3)
-Se esta versão for copiada por cima de uma pasta antiga, o prebuild remove automaticamente `postcss.config.*` residual e pastas antigas do Sites antes do `next build`. Isso evita que uma configuração Tailwind antiga contamine o deploy atual.
+## Build Vercel
 
-## V0.3.4 — Vercel Hard-Clean
-
-Esta versão trata explicitamente o cenário em que os arquivos novos são copiados sobre um repositório antigo. Antes do `next build`, remove resíduos legados do scaffold OpenAI Sites/vinext/Vite/Worker/Drizzle (`build/`, `worker/`, `db/`, `app/mcp/`, `vite.config.ts`, `drizzle.config.ts`, PostCSS antigo e scripts Sites). O `tsconfig.json` também limita a compilação aos diretórios atuais `app/` e `lib/`.
-
-## V0.3.5 — Vercel Pruned
-
-Build defensivo para repositórios que receberam versões novas por sobreposição. Antes de compilar, remove fontes antigas do OpenAI Sites/vinext e também as rotas/libs do Roteiro V0.7.x que poderiam continuar versionadas. O `tsconfig` lista explicitamente apenas os arquivos do MVP atual.
+O prebuild continua removendo resíduos legados do Roteiro/OpenAI Sites antes de executar `next build`.
