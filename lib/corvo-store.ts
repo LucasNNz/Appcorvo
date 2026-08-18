@@ -122,6 +122,10 @@ type CorvoState = {
   snapshots: Snapshot[];
 };
 
+function emptyState(): CorvoState {
+  return { version: 1, projects: [], scenes: [], jobs: [], snapshots: [] };
+}
+
 const STATE_PATH = "corvo-core/state-v1.json";
 const R2_ENDPOINT = "https://34da8bbc6302e3c68edf3a36f1569668.r2.cloudflarestorage.com";
 const R2_BUCKET = "corvoquiz-prod";

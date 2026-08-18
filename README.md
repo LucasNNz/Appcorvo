@@ -1,4 +1,4 @@
-# CORVO ROTEIRO MVP V0.4.1 — R2 FIXED CONFIG
+# CORVO ROTEIRO MVP V0.4.2 — R2 FIXED CONFIG
 
 MVP pessoal do novo Corvo: Next.js na Vercel, MCP direto e persistência privada no Cloudflare R2 pela interface S3.
 
